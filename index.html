@@ -2392,11 +2392,11 @@ function exportarJSON() {
   notify('Datos exportados');
 }
 
-function importarJSON(event) {
+async function importarJSON(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = e => {
+  reader.onload = async e => {
     try {
       const data = JSON.parse(e.target.result);
       // Soporte formato nuevo (objeto con promociones + credenciales) y formato antiguo (array)
