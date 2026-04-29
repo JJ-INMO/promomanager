@@ -1,0 +1,2998 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PromoManager · Zaragoza</title>
+<script>
+/* Chart.js mini-polyfill — bar + line charts using Canvas 2D */
+(function(global){
+'use strict';
+function Chart(canvas, config) {
+  this._canvas = canvas;
+  this._config = config;
+  this._draw();
+}
+Chart.prototype.destroy = function() {
+  const ctx = this._canvas.getContext('2d');
+  ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
+};
+Chart.prototype.update = function() { this._draw(); };
+
+Chart.prototype._draw = function() {
+  const canvas = this._canvas;
+  if (!canvas) return;
+  const cfg = this._config;
+  const data = cfg.data || {};
+  const opts = cfg.options || {};
+  const datasets = data.datasets || [];
+  const labels = data.labels || [];
+  const isHBar = (opts.indexAxis === 'y');
+
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth || canvas.width || 400;
+  const H = canvas.clientHeight || canvas.height || 240;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  // Margins
+  const ml = isHBar ? 90 : 40, mr = 20, mt = 16, mb = isHBar ? 30 : 40;
+  const pw = W - ml - mr, ph = H - mt - mb;
+
+  // Collect all numeric values
+  const allVals = datasets.flatMap(ds => (ds.data || []).map(Number).filter(v => isFinite(v)));
+  const isStacked = opts.scales?.x?.stacked || opts.scales?.y?.stacked;
+  let minV = 0, maxV = 1;
+  if (isStacked) {
+    // stacked: sum positives per index
+    const sums = labels.map((_,i) => datasets.reduce((a,ds)=>a+(ds.data[i]||0),0));
+    maxV = Math.max(...sums, 1);
+  } else {
+    minV = Math.min(0, ...allVals);
+    maxV = Math.max(1, ...allVals);
+  }
+  const range = maxV - minV || 1;
+
+  function toX(v) { return ml + (v - minV) / range * pw; }
+  function toY(v) { return mt + ph - (v - minV) / range * ph; }
+
+  // Draw grid lines
+  ctx.strokeStyle = 'rgba(128,128,128,0.12)';
+  ctx.lineWidth = 1;
+  const gridCount = 4;
+  for (let i = 0; i <= gridCount; i++) {
+    const v = minV + range * i / gridCount;
+    if (isHBar) {
+      const x = toX(v);
+      ctx.beginPath(); ctx.moveTo(x, mt); ctx.lineTo(x, mt + ph); ctx.stroke();
+    } else {
+      const y = toY(v);
+      ctx.beginPath(); ctx.moveTo(ml, y); ctx.lineTo(ml + pw, y); ctx.stroke();
+    }
+  }
+
+  // Zero line
+  if (minV < 0) {
+    ctx.strokeStyle = 'rgba(128,128,128,0.4)';
+    if (isHBar) { const x=toX(0); ctx.beginPath();ctx.moveTo(x,mt);ctx.lineTo(x,mt+ph);ctx.stroke(); }
+    else { const y=toY(0); ctx.beginPath();ctx.moveTo(ml,y);ctx.lineTo(ml+pw,y);ctx.stroke(); }
+  }
+
+  const n = labels.length;
+  const groupW = isHBar ? ph / Math.max(n,1) : pw / Math.max(n,1);
+  const barDatasets = datasets.filter(ds => !ds.type || ds.type === 'bar');
+  const lineDatasets = datasets.filter(ds => ds.type === 'line');
+  const barCount = isStacked ? 1 : barDatasets.length;
+  const barW = groupW * 0.75 / Math.max(barCount, 1);
+  const gap = groupW * 0.25;
+
+  // Draw bars
+  barDatasets.forEach((ds, di) => {
+    const color = Array.isArray(ds.backgroundColor)
+      ? ds.backgroundColor
+      : new Array(n).fill(ds.backgroundColor || '#85B7EB');
+    const border = Array.isArray(ds.borderColor) ? ds.borderColor : new Array(n).fill(ds.borderColor || 'transparent');
+
+    labels.forEach((_, i) => {
+      const rawVal = ds.data[i] || 0;
+      const val = Number(rawVal);
+      let stackOffset = 0;
+      if (isStacked && di > 0) {
+        stackOffset = barDatasets.slice(0, di).reduce((a, prev) => a + (Number(prev.data[i]) || 0), 0);
+      }
+      const c = color[i] || color[0] || '#85B7EB';
+      const b = border[i] || border[0] || 'transparent';
+      ctx.fillStyle = c;
+      ctx.strokeStyle = b;
+      ctx.lineWidth = ds.borderWidth || 0;
+
+      if (isHBar) {
+        const y0 = mt + i * groupW + gap / 2 + (isStacked ? 0 : di * barW);
+        const x0 = toX(stackOffset);
+        const bh = barW;
+        const bw = Math.abs(toX(val + stackOffset) - x0);
+        ctx.fillRect(x0, y0, bw, bh);
+        if (ds.borderWidth) ctx.strokeRect(x0, y0, bw, bh);
+      } else {
+        const x0 = ml + i * groupW + gap / 2 + (isStacked ? 0 : di * barW);
+        const base = toY(stackOffset);
+        const top = toY(val + stackOffset);
+        const bh = Math.abs(base - top);
+        const by = val >= 0 ? top : base;
+        ctx.fillRect(x0, by, barW, bh);
+        if (ds.borderWidth) ctx.strokeRect(x0, by, barW, bh);
+      }
+    });
+  });
+
+  // Draw lines
+  lineDatasets.forEach(ds => {
+    const points = ds.data.map((v, i) => {
+      const x = ml + i * groupW + groupW / 2;
+      const y = toY(Number(v));
+      return { x, y };
+    });
+    // Line
+    const bc = Array.isArray(ds.borderColor) ? ds.borderColor[0] : ds.borderColor;
+    ctx.strokeStyle = bc || '#185FA5';
+    ctx.lineWidth = ds.borderWidth ?? 2;
+    ctx.beginPath();
+    points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+    ctx.stroke();
+    // Dots
+    points.forEach((p, i) => {
+      const dotColor = Array.isArray(ds.borderColor) ? ds.borderColor[i] : (bc || '#185FA5');
+      ctx.fillStyle = dotColor;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
+    });
+  });
+
+  // Labels (axis)
+  ctx.fillStyle = '#888';
+  ctx.font = `10px Arial`;
+  ctx.textAlign = 'center';
+  if (isHBar) {
+    // X axis ticks
+    for (let i = 0; i <= gridCount; i++) {
+      const v = minV + range * i / gridCount;
+      const x = toX(v);
+      const fmtV = Math.abs(v) >= 1000000 ? (v/1000000).toFixed(1)+'M' : Math.abs(v) >= 1000 ? (v/1000).toFixed(0)+'k' : v.toFixed(0);
+      ctx.fillText(fmtV, x, mt + ph + 14);
+    }
+    // Y axis labels
+    ctx.textAlign = 'right';
+    labels.forEach((lbl, i) => {
+      const y = mt + i * groupW + groupW / 2 + 4;
+      const txt = String(lbl).slice(0, 12);
+      ctx.fillText(txt, ml - 4, y);
+    });
+  } else {
+    // X axis labels
+    labels.forEach((lbl, i) => {
+      const x = ml + i * groupW + groupW / 2;
+      const txt = String(lbl).slice(0, 10);
+      ctx.fillText(txt, x, mt + ph + 14);
+    });
+    // Y axis ticks
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= gridCount; i++) {
+      const v = minV + range * i / gridCount;
+      const y = toY(v);
+      const fmtV = Math.abs(v) >= 1000000 ? (v/1000000).toFixed(1)+'M' : Math.abs(v) >= 1000 ? (v/1000).toFixed(0)+'k' : v.toFixed(0);
+      ctx.fillText(opts.scales?.y?.ticks?.callback ? opts.scales.y.ticks.callback(v) : fmtV, ml - 4, y + 4);
+    }
+  }
+};
+
+global.Chart = Chart;
+})(typeof window !== 'undefined' ? window : this);
+
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg0:#ffffff;--bg1:#f8f9fa;--bg2:#f1f3f5;--bg3:#e9ecef;
+    --text1:#1a1a2e;--text2:#495057;--text3:#868e96;
+    --border:#dee2e6;--border2:#ced4da;
+    --blue:#185FA5;--blue-l:#E6F1FB;--blue-m:#378ADD;
+    --green:#3B6D11;--green-l:#EAF3DE;--green-m:#639922;
+    --amber:#854F0B;--amber-l:#FAEEDA;--amber-m:#EF9F27;
+    --red:#A32D2D;--red-l:#FCEBEB;--red-m:#E24B4A;
+    --teal:#0F6E56;--teal-l:#E1F5EE;--teal-m:#1D9E75;
+    --radius:8px;--radius-lg:12px;
+    --font:'Segoe UI',system-ui,sans-serif;
+  }
+  @media(prefers-color-scheme:dark){
+    :root{
+      --bg0:#1e1e2e;--bg1:#2a2a3e;--bg2:#313145;--bg3:#3a3a50;
+      --text1:#e8e8f0;--text2:#a8a8c0;--text3:#68688a;
+      --border:#3a3a50;--border2:#4a4a65;
+    }
+  }
+  body{font-family:var(--font);font-size:13px;background:var(--bg2);color:var(--text1);min-height:100vh}
+  
+  /* Layout */
+  .app{display:flex;flex-direction:column;min-height:100vh}
+  .topbar{display:flex;align-items:center;gap:12px;padding:10px 20px;background:var(--bg0);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+  .topbar-logo{font-size:16px;font-weight:600;color:var(--text1)}
+  .topbar-logo span{color:var(--blue)}
+  .topbar-right{display:flex;align-items:center;gap:8px;margin-left:auto}
+  .tabs{display:flex;gap:0;background:var(--bg1);border-bottom:1px solid var(--border);padding:0 20px;overflow-x:auto;position:sticky;top:53px;z-index:90}
+  .tab{padding:10px 16px;font-size:13px;cursor:pointer;color:var(--text2);border:none;border-bottom:2px solid transparent;background:none;font-family:var(--font);white-space:nowrap;transition:color .15s}
+  .tab:hover{color:var(--text1)}
+  .tab.active{color:var(--text1);border-bottom-color:var(--blue);font-weight:600}
+  .content{flex:1;padding:20px;max-width:1400px;width:100%;margin:0 auto}
+  .sec{display:none}.sec.active{display:block}
+
+  /* Form controls */
+  select,input[type=number],input[type=text],textarea{
+    font-family:var(--font);font-size:13px;color:var(--text1);
+    background:var(--bg0);border:1px solid var(--border2);border-radius:var(--radius);
+    padding:6px 10px;transition:border-color .15s,box-shadow .15s
+  }
+  select:focus,input:focus,textarea:focus{outline:none;border-color:var(--blue-m);box-shadow:0 0 0 3px rgba(55,138,221,.15)}
+  input.pres-formula{background:var(--bg1) !important;color:var(--text2) !important}
+  input.pres-override{background:#FFFBEA !important;color:#1A1A1A !important;border-color:#F0C040 !important;font-weight:500}
+  button{font-family:var(--font);font-size:13px;cursor:pointer;border-radius:var(--radius);padding:7px 14px;border:1px solid var(--border2);background:var(--bg0);color:var(--text1);transition:background .15s,border-color .15s}
+  button:hover{background:var(--bg2);border-color:var(--border2)}
+  button.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+  button.primary:hover{background:#1469b0}
+  button.danger{background:var(--red-l);color:var(--red);border-color:var(--red-m)}
+
+  /* Cards */
+  .card{background:var(--bg0);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;margin-bottom:14px}
+  .card-title{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+  /* Metric cards */
+  .grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+  .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+  @media(max-width:700px){.grid4,.grid3{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}}
+  .mc{background:var(--bg1);border-radius:var(--radius);padding:12px 14px}
+  .mc .lbl{font-size:11px;color:var(--text3);margin-bottom:4px}
+  .mc .val{font-size:22px;font-weight:600;color:var(--text1);line-height:1.2}
+  .mc .sub{font-size:11px;color:var(--text3);margin-top:3px}
+  .mc.highlight{background:var(--blue-l)}
+  .mc.highlight .lbl{color:var(--blue)}
+  .mc.highlight .val{color:var(--blue)}
+
+  /* Tables */
+  .tbl-wrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{text-align:left;padding:7px 8px;font-size:11px;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);white-space:nowrap;background:var(--bg1)}
+  td{padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text1);vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:var(--bg1)}
+  .tr-total td{font-weight:600;background:var(--bg2) !important}
+  table input[type=number],table input[type=text]{padding:3px 6px;font-size:12px;border-radius:4px;width:100%}
+
+  /* Badges & pills */
+  .badge{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500}
+  .badge-blue{background:var(--blue-l);color:var(--blue)}
+  .badge-green{background:var(--green-l);color:var(--green)}
+  .badge-amber{background:var(--amber-l);color:var(--amber)}
+  .badge-red{background:var(--red-l);color:var(--red)}
+  .badge-teal{background:var(--teal-l);color:var(--teal)}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:10px}
+
+  /* Progress bar */
+  .pbar{height:6px;background:var(--bg3);border-radius:3px;margin-top:4px;overflow:hidden}
+  .pbar-fill{height:100%;border-radius:3px;background:var(--teal-m);transition:width .4s}
+  .pbar-fill.warn{background:var(--amber-m)}
+  .pbar-fill.danger{background:var(--red-m)}
+
+  /* Promo chips */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg0);border:1px solid var(--border);border-radius:20px;padding:5px 14px;font-size:12px;cursor:pointer;transition:all .15s}
+  .chip:hover{border-color:var(--blue-m);color:var(--blue)}
+  .chip.active{background:var(--blue-l);border-color:var(--blue-m);color:var(--blue);font-weight:500}
+  .chip-del{font-size:14px;line-height:1;color:var(--text3);cursor:pointer}
+  .chip-del:hover{color:var(--red)}
+
+  /* Modal */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
+  .modal{background:var(--bg0);border-radius:var(--radius-lg);padding:28px;width:100%;max-width:480px;border:1px solid var(--border)}
+  .modal h3{font-size:18px;font-weight:600;margin-bottom:20px}
+  .form-row{margin-bottom:14px}
+  .form-row label{display:block;font-size:12px;font-weight:500;color:var(--text2);margin-bottom:5px}
+  .form-row input,.form-row select{width:100%}
+  .form-row .hint{font-size:11px;color:var(--text3);margin-top:3px}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+  .divider{height:1px;background:var(--border);margin:14px 0}
+
+  /* Row layout */
+  .row-between{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)}
+  .row-between:last-child{border-bottom:none}
+  .row-between .key{color:var(--text2)}
+  .row-between .val{font-weight:500}
+
+  /* Section header */
+  .sect-h{font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;padding:10px 0 4px;margin-top:6px}
+
+  /* Save indicator */
+  .saved{font-size:11px;color:var(--green);padding:4px 10px;border-radius:var(--radius);background:var(--green-l)}
+
+  /* Notification */
+  #notif{position:fixed;bottom:20px;right:20px;background:var(--text1);color:var(--bg0);padding:10px 18px;border-radius:var(--radius-lg);font-size:13px;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <span class="topbar-logo">Promo<span>Manager</span></span>
+  <select id="promo-select" onchange="selectPromo(this.value)" style="min-width:200px"></select>
+  <div class="topbar-right">
+    <span id="sync-status" style="display:none;font-size:11px;padding:3px 10px;border-radius:10px;font-weight:500"></span>
+    <span id="save-indicator" class="saved" style="display:none">Guardado</span>
+    <button onclick="showCloudModal()" title="Configurar sincronización en la nube" style="font-size:16px;padding:4px 10px">&#9729;</button>
+    <button onclick="exportarJSON()">Exportar datos</button>
+    <label style="cursor:pointer"><button onclick="this.parentElement.querySelector('input').click()">Importar JSON</button><input type="file" accept=".json" style="display:none" onchange="importarJSON(event)"></label>
+    <button onclick="exportarExcel()" style="background:var(--green-l);color:var(--green);border-color:var(--green-m);font-weight:600">&#8595; Excel</button>
+    <label style="cursor:pointer"><button onclick="this.parentElement.querySelector('input').click()" style="background:var(--teal-l);color:var(--teal);border-color:var(--teal-m);font-weight:600">&#8679; Cargar Excel</button><input type="file" accept=".xlsx,.xls" style="display:none" onchange="importarExcel(event)"></label>
+    <button class="primary" onclick="showNewPromoModal()">+ Nueva promoción</button>
+  </div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <button class="tab active" onclick="showTab('dashboard')">Dashboard</button>
+  <button class="tab" onclick="showTab('seguimiento')">Seguimiento</button>
+  <button class="tab" onclick="showTab('superficies')">Superficies</button>
+  <button class="tab" onclick="showTab('viviendas')">Viviendas</button>
+  <button class="tab" onclick="showTab('costes')">Costes</button>
+  <button class="tab" onclick="showTab('cashflow')">Cashflow</button>
+</div>
+
+<!-- CONTENT -->
+<div class="content">
+
+<!-- ===== DASHBOARD ===== -->
+<div id="sec-dashboard" class="sec active">
+
+  <!-- Filtro por tipo -->
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+    <span style="font-size:12px;font-weight:500;color:var(--text2)">Mostrar:</span>
+    <div id="dash-tipo-filters" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap" id="dash-chips"></div>
+  </div>
+
+  <div class="grid4" id="dash-kpis"></div>
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title">Rentabilidad · <span id="dash-rent-promo" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text2)">promoción seleccionada</span></div>
+    <div class="grid4" id="dash-rent" style="margin-bottom:0;grid-template-columns:repeat(4,minmax(0,1fr))"></div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title">Ingresos vs costes <span class="badge badge-blue" id="dash-chart-lbl"></span></div>
+      <div style="position:relative;height:240px"><canvas id="chart-bar" role="img" aria-label="Ingresos y costes por promoción"></canvas></div>
+      <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text2)">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#85B7EB;display:inline-block"></span>Ingresos</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#F0997B;display:inline-block"></span>Costes</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Margen por promoción (%)</div>
+      <div style="position:relative;height:240px"><canvas id="chart-margen" role="img" aria-label="Margen por promoción"></canvas></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Resumen de cartera</div>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th>Tipo</th><th>Promoción</th><th style="text-align:right">Viviendas</th>
+        <th style="text-align:right">Ingresos</th><th style="text-align:right">Costes</th>
+        <th style="text-align:right">Margen</th><th style="text-align:right">% Margen</th>
+        <th style="text-align:right">ROI s/coste</th>
+        <th style="text-align:right">€/m² útil</th>
+        <th style="text-align:right">Benef./viv</th>
+        <th style="text-align:right">% Ejecutado</th><th>Estado</th>
+      </tr></thead>
+      <tbody id="dash-tbody"></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SEGUIMIENTO ===== -->
+<div id="sec-seguimiento" class="sec">
+
+  <!-- Selector de promoción -->
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+    <span style="font-size:13px;font-weight:500;color:var(--text2)">Promoción:</span>
+    <div class="chips" id="seg-chips" style="margin-bottom:0"></div>
+  </div>
+
+  <!-- KPIs principales previsto vs real -->
+  <div id="seg-kpis" class="grid4" style="margin-bottom:14px"></div>
+
+  <!-- Semáforo de desviaciones -->
+  <div id="seg-semaforo" class="card" style="margin-bottom:14px"></div>
+
+  <!-- Tabla detalle previsto vs real por grupo de costes -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title">Desviación por grupo de costes</div>
+    <div class="tbl-wrap">
+    <table style="table-layout:auto">
+      <thead><tr>
+        <th>Grupo</th>
+        <th style="text-align:right">Presupuestado</th>
+        <th style="text-align:right">Ejecutado</th>
+        <th style="text-align:right">Pendiente</th>
+        <th style="text-align:right">% Ejec.</th>
+        <th style="text-align:right">Desviación</th>
+        <th style="min-width:120px">Estado</th>
+      </tr></thead>
+      <tbody id="seg-costes-tbody"></tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- Tabla ventas por tipología -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title">Estado de ventas por tipología</div>
+    <div class="tbl-wrap">
+    <table style="table-layout:auto">
+      <thead><tr>
+        <th>Tipología</th>
+        <th style="text-align:right">Total uds</th>
+        <th style="text-align:right">Disponibles</th>
+        <th style="text-align:right">Reservadas</th>
+        <th style="text-align:right">Contrato</th>
+        <th style="text-align:right">Escrituradas</th>
+        <th style="text-align:right">Ing. previsto</th>
+        <th style="text-align:right">Ing. comprometido</th>
+        <th style="text-align:right">% vendido</th>
+      </tr></thead>
+      <tbody id="seg-ventas-tbody"></tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- Gráficos previsto vs real -->
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title">Costes: previsto vs ejecutado por grupo</div>
+      <div style="position:relative;height:280px">
+        <canvas id="chart-seg-costes" role="img" aria-label="Costes presupuestados vs ejecutados por grupo"></canvas>
+      </div>
+      <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--text2)">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#85B7EB;display:inline-block"></span>Presupuestado</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#1D9E75;display:inline-block"></span>Ejecutado</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Ventas: previsto vs real</div>
+      <div style="position:relative;height:280px">
+        <canvas id="chart-seg-ventas" role="img" aria-label="Ingresos previstos vs comprometidos y estado de unidades"></canvas>
+      </div>
+      <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--text2)">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#85B7EB;display:inline-block"></span>Previsto</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#1D9E75;display:inline-block"></span>Escrituradas</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#EF9F27;display:inline-block"></span>Contrato</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#FAC775;display:inline-block"></span>Reservadas</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ===== SUPERFICIES ===== -->
+<div id="sec-superficies" class="sec">
+  <div class="grid4" id="sup-kpis"></div>
+  <div class="card">
+    <div class="card-title">
+      Plantas
+      <button onclick="addPlanta()" style="font-size:11px;padding:3px 10px">+ Añadir planta</button>
+    </div>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th style="min-width:110px">Planta</th>
+        <th style="min-width:130px">Tipo</th>
+        <th style="text-align:right;min-width:90px">Garaje m²</th>
+        <th style="text-align:right;min-width:90px">Jardín m²</th>
+        <th style="text-align:right;min-width:90px">Local m²</th>
+        <th style="text-align:right;min-width:90px">Vivienda m²</th>
+        <th style="text-align:right;min-width:90px">Total fila m²</th>
+        <th style="width:36px"></th>
+      </tr></thead>
+      <tbody id="sup-tbody"></tbody>
+    </table>
+    </div>
+  </div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title">Ratios automáticos</div>
+      <div id="sup-ratios"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Parámetros del edificio</div>
+      <div class="form-grid" style="margin-bottom:0">
+        <div class="form-row">
+          <label>Nº plazas garaje</label>
+          <input type="number" id="sup-nplazas" min="0" onchange="currentPromo().nplazas=+this.value;renderSuperficies()">
+        </div>
+        <div class="form-row">
+          <label>Nº total viviendas</label>
+          <input type="number" id="sup-nviv" min="0" onchange="currentPromo().nviv_input=+this.value;renderSuperficies()">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== VIVIENDAS ===== -->
+<div id="sec-viviendas" class="sec">
+  <!-- KPIs top -->
+  <div id="viv-kpis" class="grid4" style="margin-bottom:14px"></div>
+
+  <!-- Barra de ventas visual -->
+  <div class="card" style="padding:14px 20px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <span style="font-size:12px;font-weight:600;color:var(--text2)">Avance de ventas</span>
+      <span id="viv-venta-resumen" style="font-size:12px;color:var(--text2)"></span>
+    </div>
+    <div style="display:flex;height:18px;border-radius:6px;overflow:hidden;gap:1px" id="viv-venta-bar"></div>
+    <div style="display:flex;gap:16px;margin-top:8px;font-size:11px;flex-wrap:wrap" id="viv-venta-legend"></div>
+  </div>
+
+  <!-- Tabs internas: Tipologías | Unidades -->
+  <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px">
+    <button class="tab active" id="vtab-tip" onclick="switchVivTab('tipologias')" style="font-size:12px;padding:8px 14px">Tipologías</button>
+    <button class="tab" id="vtab-uds" onclick="switchVivTab('unidades')" style="font-size:12px;padding:8px 14px">Unidades individuales</button>
+  </div>
+
+  <!-- Tipologías -->
+  <div id="vsec-tipologias">
+    <div class="card">
+      <div class="card-title">
+        Tipologías
+        <button onclick="addTipologia()" style="font-size:11px;padding:3px 10px">+ Añadir tipología</button>
+        <button onclick="generarUnidades()" style="font-size:11px;padding:3px 10px;background:var(--blue-l);color:var(--blue);border-color:var(--blue-m)">Generar unidades</button>
+      </div>
+      <div class="tbl-wrap">
+      <table style="table-layout:auto">
+        <thead><tr>
+          <th style="min-width:120px">Tipología</th>
+          <th style="text-align:right;min-width:55px">Uds</th>
+          <th style="text-align:right;min-width:50px">Dorm</th>
+          <th style="text-align:right;min-width:75px">m² Const</th>
+          <th style="text-align:right;min-width:75px">m² Útil</th>
+          <th style="text-align:right;min-width:115px">Precio lista (€)</th>
+          <th style="text-align:right;min-width:115px">Precio venta (€)</th>
+          <th style="text-align:right;min-width:110px">Subtotal lista (€)</th>
+          <th style="min-width:90px">Notas</th>
+          <th style="width:36px"></th>
+        </tr></thead>
+        <tbody id="viv-tbody"></tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Unidades individuales -->
+  <div id="vsec-unidades" style="display:none">
+    <div class="card">
+      <div class="card-title">
+        Unidades individuales
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--text2)">Filtrar:</span>
+          <select id="viv-filtro-tipo" onchange="renderUnidades()" style="font-size:11px;padding:3px 8px">
+            <option value="">Todas las tipologías</option>
+          </select>
+          <select id="viv-filtro-estado" onchange="renderUnidades()" style="font-size:11px;padding:3px 8px">
+            <option value="">Todos los estados</option>
+            <option value="Disponible">Disponible</option>
+            <option value="Reservada">Reservada</option>
+            <option value="Contrato">Contrato</option>
+            <option value="Escriturada">Escriturada</option>
+          </select>
+          <button onclick="addUnidad()" style="font-size:11px;padding:3px 10px">+ Añadir unidad</button>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+      <table style="table-layout:auto" id="viv-uds-table">
+        <thead><tr>
+          <th style="min-width:80px">Ref.</th>
+          <th style="min-width:100px">Tipología</th>
+          <th style="min-width:70px">Planta</th>
+          <th style="min-width:80px">Orientación</th>
+          <th style="text-align:right;min-width:70px">m² Const</th>
+          <th style="text-align:right;min-width:70px">m² Útil</th>
+          <th style="text-align:right;min-width:110px">Precio lista (€)</th>
+          <th style="text-align:right;min-width:110px">Precio venta (€)</th>
+          <th style="min-width:110px">Estado</th>
+          <th style="min-width:100px">Comprador</th>
+          <th style="min-width:90px">Fecha</th>
+          <th style="min-width:90px">Notas</th>
+          <th style="width:36px"></th>
+        </tr></thead>
+        <tbody id="viv-uds-tbody"></tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== COSTES ===== -->
+<div id="sec-costes" class="sec">
+  <div class="grid4" id="cos-kpis"></div>
+  <div class="card" style="padding:12px 16px;margin-bottom:14px">
+    <div style="font-size:12px;color:var(--text2);line-height:1.6">
+      <strong>Leyenda columnas:</strong>
+      &nbsp;🔵 <em>Fórmula</em> = base de cálculo automático &nbsp;|&nbsp;
+      ✏️ <em>Presupuesto</em> = editable (los conceptos con fórmula se recalculan al cambiar superficies/viviendas) &nbsp;|&nbsp;
+      ✅ <em>Ejecutado</em> = introduce el importe certificado &nbsp;|&nbsp;
+      🟡 <em>Pendiente</em> y <em>% Ejec.</em> = automáticos
+    </div>
+  </div>
+  <div id="cos-groups"></div>
+</div>
+
+<!-- ===== CASHFLOW ===== -->
+<div id="sec-cashflow" class="sec">
+  <div class="card">
+    <div class="card-title">Parámetros del cashflow</div>
+    <div class="form-grid">
+      <div class="form-row"><label>Mes inicio de obra</label><input type="number" id="cf-inicio" value="1" min="1" max="24" onchange="renderCashflow()"><div class="hint">Mes 1 = inicio del proyecto</div></div>
+      <div class="form-row"><label>Plazo de construcción (meses)</label><input type="number" id="cf-plazo" value="24" min="6" max="60" onchange="renderCashflow()"></div>
+      <div class="form-row"><label>% cobros en preventa (antes entrega)</label><input type="number" id="cf-preventa" value="20" min="0" max="100" onchange="renderCashflow()"><div class="hint">El resto se cobra en la entrega</div></div>
+      <div class="form-row"><label>% pagos en el mes 1 (solar + previos)</label><input type="number" id="cf-pago1" value="35" min="0" max="100" onchange="renderCashflow()"><div class="hint">Solar, licencias, honorarios iniciales</div></div>
+    </div>
+  </div>
+  <div class="grid4" id="cf-kpis"></div>
+  <div class="card">
+    <div class="card-title">Cashflow mensual <span class="badge badge-blue" id="cf-promo-name"></span></div>
+    <div style="position:relative;height:280px"><canvas id="chart-cf" role="img" aria-label="Cashflow mensual: cobros, pagos y saldo acumulado"></canvas></div>
+    <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text2);flex-wrap:wrap">
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#C0DD97;display:inline-block"></span>Cobros</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:#F5C4B3;display:inline-block"></span>Pagos</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:var(--blue);display:inline-block"></span>Saldo acumulado (eje derecho)</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Tabla mensual detallada</div>
+    <div class="tbl-wrap">
+    <table style="table-layout:auto;min-width:600px">
+      <thead><tr>
+        <th>Mes</th>
+        <th style="text-align:right">Cobros (€)</th>
+        <th style="text-align:right">Pagos (€)</th>
+        <th style="text-align:right">Saldo mes (€)</th>
+        <th style="text-align:right">Saldo acumulado (€)</th>
+        <th>Hito</th>
+      </tr></thead>
+      <tbody id="cf-tbody"></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+</div><!-- /content -->
+</div><!-- /app -->
+
+<!-- CLOUD MODAL -->
+<div class="overlay" id="cloud-modal" style="display:none">
+  <div class="modal" style="max-width:520px">
+    <h3>&#9729; Sincronización en la nube</h3>
+    <div id="cloud-modal-body"></div>
+    <div class="btn-row" id="cloud-modal-buttons"></div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="overlay" id="modal" style="display:none">
+  <div class="modal">
+    <h3 id="modal-title">Nueva promoción</h3>
+    <div id="modal-body"></div>
+    <div class="btn-row" id="modal-buttons"></div>
+  </div>
+</div>
+
+<!-- NOTIFICATION -->
+<div id="notif"></div>
+
+<script>
+// ==================== UTILITIES ====================
+const E = id => document.getElementById(id);
+const fmtE = v => isNaN(v)||v==null ? '—' : Math.round(v).toLocaleString('es-ES') + ' €';
+const fmtN = (v, d=2) => isNaN(v)||v==null ? '—' : parseFloat(v).toLocaleString('es-ES', {maximumFractionDigits:d});
+const pct = v => isNaN(v)||v==null ? '0%' : (v*100).toFixed(1) + '%';
+const pillClass = (v) => v >= 1 ? 'pill badge-green' : v > 0.01 ? 'pill badge-amber' : 'pill badge-blue';
+const marginClass = (v) => v > 0.15 ? 'badge badge-green' : v > 0.05 ? 'badge badge-amber' : 'badge badge-red';
+
+const TIPOS_PROMO = {
+  'Promo':   { color:'#185FA5', bg:'#E6F1FB', label:'Promo'   },
+  'Estudio': { color:'#854F0B', bg:'#FAEEDA', label:'Estudio' },
+  'Archivo': { color:'#5F5E5A', bg:'#F1EFE8', label:'Archivo' },
+};
+function tipoBadge(tipo) {
+  const t = TIPOS_PROMO[tipo] || TIPOS_PROMO['Promo'];
+  return `<span style="background:${t.bg};color:${t.color};padding:2px 9px;border-radius:10px;font-size:11px;font-weight:500;white-space:nowrap">${t.label}</span>`;
+}
+
+// Tipos visibles en el dashboard (todos por defecto)
+let dashTiposFiltro = new Set(['Promo','Estudio','Archivo']);
+
+function notify(msg) {
+  const n = E('notif'); n.textContent = msg; n.style.opacity = '1';
+  setTimeout(() => n.style.opacity = '0', 2500);
+}
+
+function showSaved() {
+  const s = E('save-indicator'); s.style.display = 'inline'; 
+  clearTimeout(window._saveT);
+  window._saveT = setTimeout(() => s.style.display = 'none', 2000);
+}
+
+// ==================== DATA MODEL ====================
+function mkCosteSkeleton() {
+  return [
+    { grupo: 'Solar', items: [
+      { id:'solar_precio',  canal:100, concepto:'Precio solar',                notas:'Valor directo escriturado',        formula:'directo',        pct_val:null,  coste_unit:null, base_val:130000, pres:130000, ejec:0 },
+      { id:'solar_api',     canal:110, concepto:'API compra solar',             notas:'= precio solar × %',               formula:'solar×%',        pct_val:0.045, coste_unit:null, base_val:null,   pres:0,      ejec:0 },
+      { id:'solar_itp',     canal:120, concepto:'ITP (2ª transmisión)',          notas:'= precio solar × %',               formula:'solar×%',        pct_val:0,     coste_unit:null, base_val:null,   pres:0,      ejec:0 },
+      { id:'solar_ajd',     canal:130, concepto:'AJD solar',                    notas:'= precio solar × 1,5%',            formula:'solar×%',        pct_val:0.015, coste_unit:null, base_val:null,   pres:0,      ejec:0 },
+      { id:'solar_notaria', canal:140, concepto:'Notaría solar',                notas:'= precio solar × 0,15%',           formula:'solar×%',        pct_val:0.0015,coste_unit:null, base_val:null,   pres:0,      ejec:0 },
+      { id:'solar_registro',canal:150, concepto:'Registro Propiedad solar',     notas:'= precio solar × 0,2%',            formula:'solar×%',        pct_val:0.002, coste_unit:null, base_val:null,   pres:0,      ejec:0 },
+    ]},
+    { grupo: 'Ejecución de Obra', items: [
+      { id:'ejec_viv',   canal:200, concepto:'Viviendas (PEM)',        notas:'= m² vivienda × €/m²',   formula:'m²_viv×€/m²',   pct_val:null, coste_unit:1300, base_val:null, pres:0, ejec:0 },
+      { id:'ejec_garaje',canal:210, concepto:'Garaje (PEM)',           notas:'= m² garaje × €/m²',     formula:'m²_gar×€/m²',   pct_val:null, coste_unit:650,  base_val:null, pres:0, ejec:0 },
+      { id:'ejec_local', canal:220, concepto:'Local (PEM)',            notas:'= m² local × €/m²',      formula:'m²_local×€/m²', pct_val:null, coste_unit:550,  base_val:null, pres:0, ejec:0 },
+      { id:'ejec_urban', canal:230, concepto:'Urbanización interior',  notas:'= m² jardín × €/m²',     formula:'m²_jar×€/m²',   pct_val:null, coste_unit:100,  base_val:null, pres:0, ejec:0 },
+      { id:'ejec_demol', canal:240, concepto:'Demolición',             notas:'Input directo si aplica', formula:'directo',       pct_val:null, coste_unit:null, base_val:0,    pres:0, ejec:0 },
+    ]},
+    { grupo: 'Licencia de Obras', items: [
+      { id:'lic_tasa',  canal:300, concepto:'Tasa Urbanística',      notas:'= PEM Licencia × %',  formula:'pemlic×%', pct_val:0,    coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'lic_icio',  canal:310, concepto:'ICIO',                  notas:'= PEM Licencia × 4%', formula:'pemlic×%', pct_val:0.04, coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'lic_1ocup', canal:320, concepto:'Licencia 1ª ocupación', notas:'= PEM Licencia × 1%', formula:'pemlic×%', pct_val:0.01, coste_unit:null, base_val:null, pres:0, ejec:0 },
+    ]},
+    { grupo: 'Costes Financieros', items: [
+      { id:'fin_estudio',      canal:400, concepto:'Estudio previo banco',          notas:'= préstamo × % (0%=directo)',formula:'prestamo×%',     pct_val:0,      coste_unit:null, base_val:null,    pres:0, ejec:0 },
+      { id:'fin_apertura',     canal:410, concepto:'Comisión apertura préstamo',    notas:'= préstamo × 0,25%',         formula:'prestamo×%',     pct_val:0.0025, coste_unit:null, base_val:null,    pres:0, ejec:0 },
+      { id:'fin_ajd',          canal:420, concepto:'AJD hipotecario',               notas:'= préstamo × 1,5%',          formula:'prestamo×%',     pct_val:0.015,  coste_unit:null, base_val:null,    pres:0, ejec:0 },
+      { id:'fin_int_suelo',    canal:430, concepto:'Interés hipoteca suelo',        notas:'Input directo',              formula:'directo',        pct_val:null,   coste_unit:null, base_val:0,       pres:0, ejec:0 },
+      { id:'fin_int_obra',     canal:440, concepto:'Interés capital construcción',  notas:'= préstamo × tipo × meses/24',formula:'cap×tipo×meses', pct_val:0.0415, coste_unit:24,   base_val:7650000, pres:0, ejec:0 },
+      { id:'fin_const_aval',   canal:450, concepto:'Constitución línea avales',     notas:'= avales × 0,2%',            formula:'avales×%',       pct_val:0.002,  coste_unit:null, base_val:null,    pres:0, ejec:0 },
+      { id:'fin_riesgo_aval',  canal:460, concepto:'Riesgo aval anual',             notas:'= avales × 1,5% × (meses/12)',formula:'avales×%×meses', pct_val:0.015,  coste_unit:null, base_val:null,    pres:0, ejec:0 },
+      { id:'fin_cancelacion',  canal:465, concepto:'Cancelación hipotecas',         notas:'= nº viviendas × €/viv',     formula:'nviv×€',         pct_val:null,   coste_unit:200,  base_val:null,    pres:0, ejec:0 },
+    ]},
+    { grupo: 'Gastos Comerciales', items: [
+      { id:'com_api',      canal:500, concepto:'Comisión API venta',          notas:'= ingresos × 2%', formula:'ingresos×%', pct_val:0.02, coste_unit:null, base_val:null, pres:0,    ejec:0 },
+      { id:'com_caseta',   canal:510, concepto:'Caseta / showroom / maqueta', notas:'Input directo',   formula:'directo',    pct_val:null, coste_unit:null, base_val:5000, pres:5000, ejec:0 },
+      { id:'com_valla',    canal:520, concepto:'Valla y señalización de obra', notas:'Input directo',   formula:'directo',    pct_val:null, coste_unit:null, base_val:1200, pres:1200, ejec:0 },
+      { id:'com_catalogo', canal:530, concepto:'Catálogo + renders',          notas:'Input directo',   formula:'directo',    pct_val:null, coste_unit:null, base_val:5000, pres:5000, ejec:0 },
+      { id:'com_pub',      canal:540, concepto:'Publicidad, redes, webs',     notas:'Input directo',   formula:'directo',    pct_val:null, coste_unit:null, base_val:5000, pres:5000, ejec:0 },
+    ]},
+    { grupo: 'Notaría · Registro · AJD (escrituración)', items: [
+      { id:'vn_not_ob',  canal:600, concepto:'Notario – Escritura obra nueva',     notas:'= PEM Licencia × 0,15%',     formula:'pemlic×%',       pct_val:0.0015, coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_ajd_ob',  canal:605, concepto:'AJD – Escritura obra nueva',         notas:'= PEM Licencia × 1,5%',      formula:'pemlic×%',       pct_val:0.015,  coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_reg_ob',  canal:610, concepto:'Registro – Escritura obra nueva',    notas:'= PEM Licencia × 0,2%',      formula:'pemlic×%',       pct_val:0.002,  coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_not_hip', canal:615, concepto:'Notario – Escritura hipotecaria',     notas:'= resp. hip. × 0,1%',        formula:'resp_hip×%',     pct_val:0.001,  coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_reg_hip', canal:620, concepto:'Registro – Escritura hipotecaria',    notas:'= resp. hip. × 0,2%',        formula:'resp_hip×%',     pct_val:0.002,  coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_not_dh',  canal:625, concepto:'Notario – División horizontal',       notas:'= (PEM Lic.+solar) × 0,15%', formula:'pemlic_solar×%', pct_val:0.0015, coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_ajd_dh',  canal:630, concepto:'AJD – División horizontal',           notas:'= (PEM Lic.+solar) × 1,5%',  formula:'pemlic_solar×%', pct_val:0.015,  coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_reg_dh',  canal:635, concepto:'Registro – División horizontal',      notas:'= (PEM Lic.+solar) × 0,2%',  formula:'pemlic_solar×%', pct_val:0.002,  coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_not_dist',canal:640, concepto:'Notario – Distribución hipotecaria',  notas:'= resp. hip. × 0,01%',       formula:'resp_hip×%',     pct_val:0.0001, coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_reg_dist',canal:645, concepto:'Registro – Distribución hipotecaria', notas:'= resp. hip. × 0,1%',        formula:'resp_hip×%',     pct_val:0.001,  coste_unit:null, base_val:null, pres:0, ejec:0 },
+      { id:'vn_disp',    canal:650, concepto:'Disposiciones hipotecarias',          notas:'Input directo',               formula:'directo',        pct_val:null,   coste_unit:null, base_val:3000, pres:3000, ejec:0 },
+      { id:'vn_gestoria',canal:655, concepto:'Gestoría banco (préstamo)',            notas:'Input directo',               formula:'directo',        pct_val:null,   coste_unit:null, base_val:2000, pres:2000, ejec:0 },
+    ]},
+    { grupo: 'Varios Construcción', items: [
+      { id:'vc_seguro',    canal:700, concepto:'Seguro decenal',                        notas:'= PEM Licencia × 0,7%',  formula:'pemlic×%', pct_val:0.007, coste_unit:null, base_val:null,  pres:0,     ejec:0 },
+      { id:'vc_oct',       canal:710, concepto:'OCT (control técnico externo)',          notas:'= PEM Licencia × 0,3%',  formula:'pemlic×%', pct_val:0.003, coste_unit:null, base_val:null,  pres:0,     ejec:0 },
+      { id:'vc_trc',       canal:720, concepto:'TRC (todo riesgo construcción)',         notas:'Input directo',          formula:'directo',  pct_val:null,  coste_unit:null, base_val:500,   pres:500,   ejec:0 },
+      { id:'vc_monitoring',canal:730, concepto:'Project Monitoring bancario',            notas:'= meses × €/mes',        formula:'meses×€',  pct_val:null,  coste_unit:1500, base_val:null,  pres:0,     ejec:0 },
+      { id:'vc_tasaciones',canal:740, concepto:'Tasaciones (banco + propias)',           notas:'Input directo',          formula:'directo',  pct_val:null,  coste_unit:null, base_val:10000, pres:10000, ejec:0 },
+      { id:'vc_topo',      canal:750, concepto:'Levantamiento topográfico',              notas:'Input directo',          formula:'directo',  pct_val:null,  coste_unit:null, base_val:1500,  pres:1500,  ejec:0 },
+      { id:'vc_geo',       canal:760, concepto:'Estudio geotécnico',                     notas:'Input directo',          formula:'directo',  pct_val:null,  coste_unit:null, base_val:3000,  pres:3000,  ejec:0 },
+      { id:'vc_sum',       canal:770, concepto:'Condiciones de suministros (acometidas)',notas:'Input directo',          formula:'directo',  pct_val:null,  coste_unit:null, base_val:25000, pres:25000, ejec:0 },
+    ]},
+    { grupo: 'Técnicos', items: [
+      { id:'tec_arq_ed',   canal:800, concepto:'Arquitecto – Estudio de Detalle',          notas:'= PEM Licencia × 0,5%',      formula:'pemlic×%',        pct_val:0.005, coste_unit:null, base_val:null, pres:0,    ejec:0 },
+      { id:'tec_arq_pb',   canal:801, concepto:'Arquitecto – Proyecto Básico',             notas:'= PEM Licencia × 5% × 49%',  formula:'pemlic×5%×49%',   pct_val:0.05,  coste_unit:0.49, base_val:null, pres:0,    ejec:0 },
+      { id:'tec_arq_pe',   canal:802, concepto:'Arquitecto – Proyecto Ejecución',          notas:'= PEM Licencia × 5% × 21%',  formula:'pemlic×5%×21%',   pct_val:0.05,  coste_unit:0.21, base_val:null, pres:0,    ejec:0 },
+      { id:'tec_arq_do',   canal:803, concepto:'Arquitecto – Dirección de obra (30%)',      notas:'= PEM Licencia × 5% × 30%',  formula:'pemlic×5%×30%',   pct_val:0.05,  coste_unit:0.3,  base_val:null, pres:0,    ejec:0 },
+      { id:'tec_apa_do',   canal:810, concepto:'Aparejador – Dirección de ejecución (30%)', notas:'= PEM Licencia × 5% × 30%',  formula:'pemlic×5%×30%',   pct_val:0.05,  coste_unit:0.3,  base_val:null, pres:0,    ejec:0 },
+      { id:'tec_apa_ss',   canal:811, concepto:'Aparejador – Coordinador SS (15%)',          notas:'= PEM Licencia × 5% × 15%',  formula:'pemlic×5%×15%',   pct_val:0.05,  coste_unit:0.15, base_val:null, pres:0,    ejec:0 },
+      { id:'tec_ing',      canal:820, concepto:'Ingenierías',                               notas:'= PEM Licencia × 0,5%',      formula:'pemlic×%',        pct_val:0.005, coste_unit:null, base_val:null, pres:0,    ejec:0 },
+      { id:'tec_teleco',   canal:821, concepto:'Ingeniero Telecomunicaciones',              notas:'Input directo',              formula:'directo',         pct_val:null,  coste_unit:null, base_val:5000, pres:5000, ejec:0 },
+      { id:'tec_pisc',     canal:822, concepto:'Ingeniero Piscinas / zonas comunes',        notas:'Input directo si aplica',    formula:'directo',         pct_val:null,  coste_unit:null, base_val:0,    pres:0,    ejec:0 },
+      { id:'tec_estr',     canal:830, concepto:'Estructurista / Cálculo estructura',        notas:'Input directo',              formula:'directo',         pct_val:null,  coste_unit:null, base_val:5600, pres:5600, ejec:0 },
+    ]},
+    { grupo: 'Extras', items: [
+      { id:'ext_extra1', canal:910, concepto:'Extra 1',       notas:'Input directo', formula:'directo', pct_val:null, coste_unit:null, base_val:60000, pres:60000, ejec:0 },
+      { id:'ext_extra2', canal:920, concepto:'Extra 2',       notas:'Input directo', formula:'directo', pct_val:null, coste_unit:null, base_val:60000, pres:60000, ejec:0 },
+      { id:'ext_viajes', canal:930, concepto:'Gastos viajes', notas:'Input directo', formula:'directo', pct_val:null, coste_unit:null, base_val:50400, pres:50400, ejec:0 },
+    ]},
+    { grupo: 'Project Management', items: [
+      { id:'pm_total', canal:950, concepto:'Project Management (% s/total costes)', notas:'= total costes anteriores × 6%', formula:'total×%', pct_val:0.06, coste_unit:null, base_val:null, pres:0, ejec:0 },
+    ]},
+  ];
+}
+function mkPromocion(nombre, opts = {}) {
+  const p = {
+    id: Date.now() + '_' + Math.random().toString(36).slice(2),
+    nombre,
+    tipo: opts.tipo || 'Promo',
+    estado: opts.estado || 'En proyecto',
+    plantas: opts.plantas || [
+      {planta:'Sótano -2',tipo:'Cerrada',gar:0,jar:0,local:0,viv:0},
+      {planta:'Sótano -1',tipo:'Cerrada',gar:396.36,jar:0,local:0,viv:0},
+      {planta:'Baja',tipo:'Abierta',gar:0,jar:136.47,local:0,viv:0},
+      {planta:'Baja',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:49.57},
+      {planta:'Baja',tipo:'Cerrada',gar:0,jar:0,local:0,viv:178.06},
+      {planta:'Primera',tipo:'Cerrada',gar:0,jar:0,local:0,viv:269.48},
+      {planta:'Segunda',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:13.52},
+      {planta:'Segunda',tipo:'Cerrada',gar:0,jar:0,local:0,viv:269.48},
+      {planta:'Tercera',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:13.52},
+      {planta:'Tercera',tipo:'Cerrada',gar:0,jar:0,local:0,viv:269.48},
+      {planta:'Cuarta',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:13.52},
+      {planta:'Cuarta',tipo:'Cerrada',gar:0,jar:0,local:0,viv:269.48},
+      {planta:'Quinta',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:13.52},
+      {planta:'Quinta',tipo:'Cerrada',gar:0,jar:0,local:0,viv:269.48},
+      {planta:'Sexta',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:13.52},
+      {planta:'Sexta',tipo:'Cerrada',gar:0,jar:0,local:0,viv:269.48},
+      {planta:'Séptima',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:13.52},
+      {planta:'Séptima',tipo:'Cerrada',gar:0,jar:0,local:0,viv:269.48},
+      {planta:'Octava',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:13.52},
+      {planta:'Octava',tipo:'Cerrada',gar:0,jar:0,local:0,viv:220.26},
+    ],
+    nplazas: opts.nplazas || 32,
+    nviv_input: opts.nviv_input || 24,
+    tipologias: opts.tipologias || [
+      {tip:'Tipo A (2 dorm)',uds:9,dorm:2,m2c:80,m2u:60.62,precio_lista:309000,precio_venta:309000,notas:''},
+      {tip:'Tipo B (3 dorm)',uds:14,dorm:3,m2c:85,m2u:79.77,precio_lista:410436,precio_venta:410436,notas:''},
+      {tip:'Trasteros',uds:24,dorm:0,m2c:0,m2u:8.5,precio_lista:14500,precio_venta:14500,notas:''},
+    ],
+    costes: mkCosteSkeleton(),
+    pem_licencia: 4831956,
+    prestamo: 7650000,
+    cf_inicio: 1, cf_plazo: 24, cf_preventa: 20, cf_pago1: 35,
+  };
+  return p;
+}
+
+// ==================== STATE ====================
+let promociones = [mkPromocion('Paseo de las Damas 12')];
+let currentId = promociones[0].id;
+let charts = {};
+let cloudBinId  = null;
+let cloudApiKey = null;
+let syncTimer   = null;
+let lastWrittenAt = 0;   // timestamp of our last cloud write
+let lastRemoteAt  = 0;   // timestamp of last remote data we saw
+let isSyncing = false;
+
+function currentPromo() { return promociones.find(p => p.id === currentId) || promociones[0]; }
+
+// ==================== CLOUD (JSONBin.io) ====================
+const JSONBIN_BASE = 'https://api.jsonbin.io/v3';
+
+async function cloudRead() {
+  if (!cloudBinId || !cloudApiKey) return null;
+  try {
+    const r = await fetch(`${JSONBIN_BASE}/b/${cloudBinId}/latest`, {
+      headers: { 'X-Master-Key': cloudApiKey }
+    });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.record || null;
+  } catch(e) { return null; }
+}
+
+async function cloudWrite(payload) {
+  if (!cloudBinId || !cloudApiKey) return false;
+  try {
+    const r = await fetch(`${JSONBIN_BASE}/b/${cloudBinId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Master-Key': cloudApiKey },
+      body: JSON.stringify(payload)
+    });
+    return r.ok;
+  } catch(e) { return false; }
+}
+
+async function cloudCreateBin(apiKey, nombre) {
+  const r = await fetch(`${JSONBIN_BASE}/b`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Master-Key': apiKey,
+      'X-Bin-Name': 'PromoManager-' + nombre,
+      'X-Bin-Private': 'true'
+    },
+    body: JSON.stringify({ promociones: [], updatedAt: 0, version: 2 })
+  });
+  if (!r.ok) throw new Error('API Key incorrecta o sin permisos.');
+  const d = await r.json();
+  return d.metadata.id;
+}
+
+// ---- Status indicator ----
+function setSyncStatus(status) {
+  const el = E('sync-status');
+  if (!el) return;
+  const cfg = {
+    ok:      { txt: 'Sincronizado',  color:'var(--green)', bg:'var(--green-l)' },
+    syncing: { txt: 'Guardando…',    color:'var(--amber)', bg:'var(--amber-l)' },
+    pulling: { txt: 'Actualizando…', color:'var(--blue)',  bg:'var(--blue-l)'  },
+    offline: { txt: 'Sin conexión',  color:'var(--red)',   bg:'var(--red-l)'   },
+    nocloud: { txt: 'Solo local',    color:'var(--text3)', bg:'var(--bg3)'     },
+  };
+  const c = cfg[status] || cfg.nocloud;
+  el.textContent = c.txt;
+  el.style.color = c.color;
+  el.style.background = c.bg;
+  el.style.display = 'inline';
+}
+
+// ---- Persist locally (instant, always) ----
+function persistLocal() {
+  try {
+    localStorage.setItem('pm_data', JSON.stringify({
+      promociones, cloudBinId, cloudApiKey, lastWrittenAt, lastRemoteAt, version: 2
+    }));
+  } catch(e) {}
+}
+
+// ---- Main save: local + debounced cloud push ----
+function saveLocal() {
+  persistLocal();
+  showSaved();
+  if (!cloudBinId || !cloudApiKey) { setSyncStatus('nocloud'); return; }
+  setSyncStatus('syncing');
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(pushToCloud, 1200);
+}
+
+async function pushToCloud() {
+  if (isSyncing) { syncTimer = setTimeout(pushToCloud, 800); return; }
+  isSyncing = true;
+  const ts = Date.now();
+  const payload = { promociones, updatedAt: ts, version: 2 };
+  const ok = await cloudWrite(payload);
+  if (ok) {
+    lastWrittenAt = ts;
+    lastRemoteAt  = ts;
+    persistLocal();
+    setSyncStatus('ok');
+  } else {
+    setSyncStatus('offline');
+  }
+  isSyncing = false;
+}
+
+// ---- Pull from cloud: apply remote changes ----
+async function pullFromCloud(force = false) {
+  if (!cloudBinId || !cloudApiKey) return;
+  if (isSyncing && !force) return;
+  const remote = await cloudRead();
+  if (!remote || !remote.promociones || !Array.isArray(remote.promociones)) return;
+
+  const remoteTs = remote.updatedAt || 0;
+
+  // Only apply if remote is newer than what we last saw
+  if (remoteTs <= lastRemoteAt && !force) return;
+
+  // Don't overwrite if WE just wrote (within 3s) to avoid echo
+  if (remoteTs <= lastWrittenAt + 3000 && !force) {
+    lastRemoteAt = remoteTs;
+    return;
+  }
+
+  // Remote is genuinely newer — apply it
+  const prevCurrentId = currentId;
+  promociones = remote.promociones.map(migratePromo);
+  lastRemoteAt = remoteTs;
+
+  // Keep currentId if still valid, else fallback to first
+  if (!promociones.find(p => p.id === prevCurrentId)) {
+    currentId = promociones[0]?.id || currentId;
+  }
+
+  persistLocal();
+  populateSelect();
+  renderCurrentTab();
+  setSyncStatus('ok');
+  notify('Datos actualizados desde otro dispositivo');
+}
+
+// ---- Polling: every 10s check for remote changes ----
+setInterval(() => pullFromCloud(), 10000);
+
+// ---- On tab/window focus: pull immediately ----
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pullFromCloud();
+});
+window.addEventListener('focus', () => pullFromCloud());
+
+// ==================== LOAD FROM STORAGE ====================
+// Migración: IDs que deben usar prestamo×% en lugar de hipmax×%
+const MIGRATE_TO_PRESTAMO = new Set(['fin_estudio','fin_apertura','fin_ajd']);
+
+function migratePromo(p) {
+  if (!p.costes) return p;
+  p.costes.forEach(g => g.items?.forEach(it => {
+    if (MIGRATE_TO_PRESTAMO.has(it.id) && it.formula === 'hipmax×%') {
+      it.formula = 'prestamo×%';
+    }
+  }));
+  return p;
+}
+
+try {
+  const saved = localStorage.getItem('pm_data');
+  if (saved) {
+    const parsed = JSON.parse(saved);
+    if (Array.isArray(parsed)) {
+      promociones = parsed.map(migratePromo);
+    } else {
+      if (parsed.promociones?.length) promociones = parsed.promociones.map(migratePromo);
+      cloudBinId     = parsed.cloudBinId     || null;
+      cloudApiKey    = parsed.cloudApiKey    || null;
+      lastWrittenAt  = parsed.lastWrittenAt  || 0;
+      lastRemoteAt   = parsed.lastRemoteAt   || 0;
+    }
+    if (promociones.length) currentId = promociones[0].id;
+  }
+} catch(e) {}
+
+// On startup: if cloud configured, pull latest immediately
+setTimeout(async () => {
+  if (cloudBinId && cloudApiKey) {
+    setSyncStatus('pulling');
+    await pullFromCloud(true);
+    setSyncStatus('ok');
+  } else {
+    setSyncStatus('nocloud');
+  }
+}, 300);
+
+// ==================== CALC ====================
+function calcSuperficies(p) {
+  const pl = p.plantas;
+  const gar = pl.reduce((a, x) => a + (x.gar||0), 0);
+  const jar = pl.reduce((a, x) => a + (x.jar||0), 0);
+  const local = pl.reduce((a, x) => a + (x.local||0), 0);
+  const viv_c = pl.filter(x => x.tipo === 'Cerrada').reduce((a, x) => a + (x.viv||0), 0);
+  const viv_ac = pl.filter(x => x.tipo === 'Abierta cubierta').reduce((a, x) => a + (x.viv||0), 0);
+  const viv = viv_c + viv_ac * 0.5;
+  const tot = pl.reduce((a, x) => a + (x.gar||0) + (x.jar||0) + (x.local||0) + (x.viv||0), 0);
+  return { gar, jar, local, viv, tot };
+}
+
+function calcViviendas(p) {
+  const tv = p.tipologias;
+  const solo = tv.filter(t => t.dorm > 0);
+  const tot_uds = solo.reduce((a, t) => a + (t.uds||0), 0);
+  const tot_m2c = solo.reduce((a, t) => a + (t.uds||0) * (t.m2c||0), 0);
+  const tot_m2u = solo.reduce((a, t) => a + (t.uds||0) * (t.m2u||0), 0);
+  const ingresos = tv.reduce((a, t) => a + (t.uds||0) * (t.precio_lista||0), 0);
+  // If unidades individuales exist, use their precio_venta for committed income
+  const uds = p.unidades || [];
+  const ing_comprometido = uds.filter(u => ['Contrato','Escriturada'].includes(u.estado))
+    .reduce((a, u) => a + (u.precio_venta || u.precio_lista || 0), 0);
+  return {
+    tot_uds, tot_m2c, tot_m2u, ingresos, ing_comprometido,
+    precio_med: tot_uds > 0 ? solo.reduce((a,t) => a + (t.uds||0)*(t.precio_lista||0), 0) / tot_uds : 0,
+    eurm2: tot_m2c > 0 ? solo.reduce((a,t) => a + (t.uds||0)*(t.precio_lista||0), 0) / tot_m2c : 0,
+    m2med: tot_uds > 0 ? tot_m2c / tot_uds : 0,
+  };
+}
+
+function calcCostes(p) {
+  const sup = calcSuperficies(p);
+  const viv = calcViviendas(p);
+  const solar    = p.costes[0].items.find(i => i.id === 'solar_precio')?.pres || 0;
+  const PEMLIC   = p.pem_licencia || 4831956;
+  const prestamo = p.prestamo     || 7650000;
+  const hip_max  = prestamo * 1.3;             // F6:  Hipoteca máxima = préstamo × 1,3
+  const resp_hip = hip_max;                    // F7:  Responsabilidad hipotecaria = hip_max (= préstamo × 1,3)
+  const avales   = (viv.ingresos * 0.2) + (0.1 * viv.ingresos * 0.2 + 3 * 0.03 * viv.ingresos * 0.2);
+  const meses    = parseInt(p.cf_plazo) || 24;
+  const nviv     = viv.tot_uds > 0 ? viv.tot_uds : (p.nviv_input || 0);
+
+  p.costes.forEach(g => {
+    if (g.grupo === 'Project Management') return;
+    g.items.forEach(it => {
+      // Respetar sobreescrituras manuales
+      if (it.pres_override !== undefined && it.pres_override !== null) {
+        it.pres = it.pres_override;
+        return;
+      }
+      const f = it.formula;
+      if (f === 'directo') { it.pres = it.base_val || it.pres || 0; return; }
+      // base_override permite al usuario fijar la base manualmente
+      const baseOverride = (it.base_override !== undefined && it.base_override !== null) ? it.base_override : null;
+      switch(f) {
+        case 'solar×%':          it.pres = (baseOverride ?? solar)     * (it.pct_val||0); break;
+        case 'm²_viv×€/m²':      it.pres = (baseOverride ?? sup.viv)   * (it.coste_unit||1300); break;
+        case 'm²_gar×€/m²':      it.pres = (baseOverride ?? sup.gar)   * (it.coste_unit||650);  break;
+        case 'm²_local×€/m²':    it.pres = (baseOverride ?? sup.local) * (it.coste_unit||550);  break;
+        case 'm²_jar×€/m²':      it.pres = (baseOverride ?? sup.jar)   * (it.coste_unit||100);  break;
+        case 'pemlic×%':          it.pres = (baseOverride ?? PEMLIC) * (it.pct_val||0); break;
+        // pemlic × pct_val × coste_unit (factor) — técnicos con % base y factor de reparto
+        case 'pemlic×5%×49%':
+        case 'pemlic×5%×21%':
+        case 'pemlic×5%×15%':
+        case 'pemlic×5%×70%':
+        case 'pemlic×5%×30%':
+        case 'pemlic×1.5%×30%':
+        case 'pemlic×1.8%×50%':
+          it.pres = (baseOverride ?? PEMLIC) * (it.pct_val||0) * (it.coste_unit||0); break;
+        // Legacy
+        case 'PEM60×5%×70%':
+        case 'PEM60×5%×30%':
+        case 'PEM60×1.5%×30%':
+        case 'PEM60×1.8%×50%':
+          it.pres = (baseOverride ?? PEMLIC) * (it.pct_val||0) * (it.coste_unit||0); break;
+        case 'pemlic_solar×%':    it.pres = (baseOverride ?? (PEMLIC + solar)) * (it.pct_val||0); break;
+        case 'hipmax×%':          it.pres = (baseOverride ?? hip_max)   * (it.pct_val||0); break;
+        case 'resp_hip×%':        it.pres = (baseOverride ?? resp_hip)  * (it.pct_val||0); break;
+        case 'nviv×€':            it.pres = (baseOverride ?? nviv)      * (it.coste_unit||0); break;
+        case 'prestamo×%':        it.pres = (baseOverride ?? prestamo)  * (it.pct_val||0); break;
+        case 'cap×tipo×meses':    it.pres = (baseOverride ?? prestamo) * (it.pct_val||0.04) * (it.coste_unit||meses) / 12 / 2; break;
+        case 'nviv×€':            it.pres = (baseOverride ?? nviv)      * (it.coste_unit||0); break;
+        case 'avales×%':          it.pres = (baseOverride ?? avales)    * (it.pct_val||0); break;
+        case 'avales×%×meses':    it.pres = (baseOverride ?? avales) * (it.pct_val||0) * (it.coste_unit||meses) / 12; break;
+        case 'ingresos×%':        it.pres = (baseOverride ?? viv.ingresos) * (it.pct_val||0.02); break;
+        case 'meses×€':           it.pres = (baseOverride ?? meses)     * (it.coste_unit||1500); break;
+        case 'uds×€':             it.pres = (baseOverride ?? (it.base_val||0)) * (it.coste_unit||0); break;
+        // Legacy backwards compat
+        case 'PEM60×%':           it.pres = (baseOverride ?? PEMLIC) * (it.pct_val||0); break;
+        case 'pem_solar×%':       it.pres = (baseOverride ?? (PEMLIC + solar)) * (it.pct_val||0); break;
+        case 'meses×1500':        it.pres = (baseOverride ?? meses) * (it.coste_unit||1500); break;
+        case 'total×4%':          break;
+      }
+    });
+  });
+
+  const subtot = p.costes.filter(g => g.grupo !== 'Project Management')
+    .reduce((a, g) => a + g.items.reduce((b, i) => b + (i.pres||0), 0), 0);
+  const pm = p.costes.find(g => g.grupo === 'Project Management');
+  if (pm) pm.items[0].pres = subtot * (pm.items[0].pct_val || 0.08);
+
+  const tot_pres = p.costes.reduce((a, g) => a + g.items.reduce((b, i) => b + (i.pres||0), 0), 0);
+  const tot_ejec = p.costes.reduce((a, g) => a + g.items.reduce((b, i) => b + (i.ejec||0), 0), 0);
+  return { tot_pres, tot_ejec, pend: tot_pres - tot_ejec, pct_ejec: tot_pres > 0 ? tot_ejec / tot_pres : 0, PEMLIC, hip_max, resp_hip };
+}
+
+function promoStats(p) {
+  const v = calcViviendas(p), c = calcCostes(p);
+  const ing = v.ingresos, cos = c.tot_pres, mrg = ing - cos;
+  const solar = p.costes[0].items.find(i => i.id === 'solar_precio')?.pres || 0;
+  // Nº viviendas: usar las unidades reales de tipologías (excl. trasteros/garajes)
+  // Si no hay tipologías con dorm>0, caer en nviv_input
+  const nviv = v.tot_uds > 0 ? v.tot_uds : (p.nviv_input || 0);
+  const roi      = cos > 0 ? mrg / cos : 0;
+  const pct_mrg  = ing > 0 ? mrg / ing : 0;
+  const eur_m2u  = v.tot_m2u > 0 ? ing / v.tot_m2u : 0;
+  const eur_m2c  = v.tot_m2c > 0 ? ing / v.tot_m2c : 0;
+  const sup = calcSuperficies(p);
+  const coste_m2 = sup.viv > 0 ? cos / sup.viv : 0;
+  const ben_viv  = nviv > 0 ? mrg / nviv : 0;
+  const apal     = solar > 0 ? cos / solar : 0;
+  // Repercusión de suelo por vivienda (precio solar total / nº viviendas con dorm>0)
+  const rep_suelo = nviv > 0 ? solar / nviv : 0;
+  return { ingresos: ing, costes: cos, margen: mrg,
+    pct_margen: pct_mrg, roi, eur_m2u, eur_m2c, coste_m2, ben_viv, apal, rep_suelo,
+    pct_ejec: c.pct_ejec, nviv };
+}
+
+// ==================== SELECT ====================
+function populateSelect() {
+  const sel = E('promo-select'); sel.innerHTML = '';
+  promociones.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.id;
+    const tipoPrefix = p.tipo && p.tipo !== 'Promo' ? `[${p.tipo}] ` : '';
+    o.textContent = tipoPrefix + p.nombre;
+    if (p.id === currentId) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+function selectPromo(id) { currentId = id; renderCurrentTab(); }
+
+// ==================== TAB ROUTING ====================
+let currentTab = 'dashboard';
+function showTab(t) {
+  document.querySelectorAll('.tab').forEach((b, i) => {
+    b.classList.toggle('active', ['dashboard','seguimiento','superficies','viviendas','costes','cashflow'][i] === t);
+  });
+  document.querySelectorAll('.sec').forEach(s => s.classList.remove('active'));
+  E('sec-' + t).classList.add('active');
+  currentTab = t;
+  renderCurrentTab();
+}
+function renderCurrentTab() {
+  if (currentTab === 'dashboard')   renderDashboard();
+  else if (currentTab === 'seguimiento') renderSeguimiento();
+  else if (currentTab === 'superficies') renderSuperficies();
+  else if (currentTab === 'viviendas')   renderViviendas();
+  else if (currentTab === 'costes')      renderCostes();
+  else if (currentTab === 'cashflow')    renderCashflow();
+}
+
+// ==================== DASHBOARD ====================
+function renderDashboard() {
+  // ---- Filtros de tipo ----
+  const filtros = E('dash-tipo-filters'); filtros.innerHTML = '';
+  Object.entries(TIPOS_PROMO).forEach(([tipo, cfg]) => {
+    const active = dashTiposFiltro.has(tipo);
+    const btn = document.createElement('button');
+    btn.style.cssText = `padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:500;border:1.5px solid ${cfg.color};background:${active?cfg.bg:'transparent'};color:${active?cfg.color:'var(--text3)'};font-family:var(--font);transition:all .15s`;
+    btn.textContent = cfg.label;
+    const cnt = promociones.filter(p => (p.tipo||'Promo') === tipo).length;
+    if (cnt > 0) btn.textContent += ` (${cnt})`;
+    btn.onclick = () => {
+      if (dashTiposFiltro.has(tipo)) {
+        if (dashTiposFiltro.size > 1) dashTiposFiltro.delete(tipo);
+      } else {
+        dashTiposFiltro.add(tipo);
+      }
+      renderDashboard();
+    };
+    filtros.appendChild(btn);
+  });
+
+  // Promociones visibles según filtro
+  const visibles = promociones.filter(p => dashTiposFiltro.has(p.tipo || 'Promo'));
+
+  // ---- Chips de selección ----
+  const chips = E('dash-chips'); chips.innerHTML = '';
+  visibles.forEach(p => {
+    const c = document.createElement('span');
+    c.className = 'chip' + (p.id === currentId ? ' active' : '');
+    c.innerHTML = p.nombre + `<span class="chip-del" onclick="event.stopPropagation();eliminarPromo('${p.id}')" title="Eliminar">×</span>`;
+    c.onclick = () => { currentId = p.id; populateSelect(); renderDashboard(); };
+    chips.appendChild(c);
+  });
+
+  // ---- KPIs globales (solo visibles) ----
+  let tot_ing = 0, tot_cos = 0, tot_viv = 0;
+  visibles.forEach(p => { const s = promoStats(p); tot_ing += s.ingresos; tot_cos += s.costes; tot_viv += s.nviv; });
+  const tot_mrg = tot_ing - tot_cos;
+  const tot_roi = tot_cos > 0 ? tot_mrg / tot_cos : 0;
+  E('dash-chart-lbl').textContent = visibles.length + ' promociones';
+  E('dash-kpis').innerHTML = `
+    <div class="mc highlight"><div class="lbl">Ingresos cartera</div><div class="val">${fmtE(tot_ing)}</div><div class="sub">${visibles.length} prom. · ${tot_viv} viv.</div></div>
+    <div class="mc"><div class="lbl">Costes totales</div><div class="val">${fmtE(tot_cos)}</div></div>
+    <div class="mc"><div class="lbl">Margen bruto total</div><div class="val">${fmtE(tot_mrg)}</div><div class="sub">${pct(tot_ing > 0 ? tot_mrg / tot_ing : 0)} s/ingresos</div></div>
+    <div class="mc"><div class="lbl">ROI s/coste total</div><div class="val" style="color:${tot_roi>0.15?'var(--green)':tot_roi>0.05?'var(--amber)':'var(--red)'}">${pct(tot_roi)}</div><div class="sub">margen / costes</div></div>`;
+
+  // ---- Rentabilidad promoción seleccionada ----
+  const sp = promoStats(currentPromo());
+  if (E('dash-rent-promo')) E('dash-rent-promo').textContent = currentPromo().nombre;
+  E('dash-rent').innerHTML = `
+    <div class="mc"><div class="lbl">% Margen s/ingresos</div><div class="val" style="color:${sp.pct_margen>0.15?'var(--green)':sp.pct_margen>0.05?'var(--amber)':'var(--red)'}">${pct(sp.pct_margen)}</div><div class="sub">${currentPromo().nombre}</div></div>
+    <div class="mc"><div class="lbl">ROI s/coste</div><div class="val" style="color:${sp.roi>0.15?'var(--green)':sp.roi>0.05?'var(--amber)':'var(--red)'}">${pct(sp.roi)}</div><div class="sub">margen / costes</div></div>
+    <div class="mc"><div class="lbl">€ / m² útil vendido</div><div class="val">${Math.round(sp.eur_m2u).toLocaleString('es-ES')} €</div><div class="sub">precio lista, excl. trasteros</div></div>
+    <div class="mc"><div class="lbl">€ / m² construido</div><div class="val">${Math.round(sp.eur_m2c).toLocaleString('es-ES')} €</div></div>
+    <div class="mc"><div class="lbl">Coste total / m² viv.</div><div class="val">${Math.round(sp.coste_m2).toLocaleString('es-ES')} €/m²</div><div class="sub">costes totales / m² viv. cons.</div></div>
+    <div class="mc"><div class="lbl">Beneficio / vivienda</div><div class="val">${fmtE(sp.ben_viv)}</div></div>
+    <div class="mc"><div class="lbl">Apalancamiento</div><div class="val">${sp.apal.toFixed(2)}x</div><div class="sub">coste total / precio solar</div></div>
+    <div class="mc"><div class="lbl">Beneficio total promo</div><div class="val">${fmtE(sp.margen)}</div></div>
+    <div class="mc"><div class="lbl">Repercusión suelo / viv.</div><div class="val">${fmtE(sp.rep_suelo)}</div><div class="sub">precio solar / nº viviendas</div></div>`;
+
+  // ---- Tabla (agrupada por tipo) ----
+  const tb = E('dash-tbody'); tb.innerHTML = '';
+  // Ordenar: Promo primero, Estudio, Archivo al final
+  const orden = ['Promo','Estudio','Archivo'];
+  const sorted = [...visibles].sort((a,b) => orden.indexOf(a.tipo||'Promo') - orden.indexOf(b.tipo||'Promo'));
+  let lastTipo = null;
+  sorted.forEach(p => {
+    // Separador de grupo
+    if ((p.tipo||'Promo') !== lastTipo) {
+      lastTipo = p.tipo || 'Promo';
+      const sep = document.createElement('tr');
+      sep.innerHTML = `<td colspan="12" style="background:var(--bg2);padding:5px 8px;font-size:11px;font-weight:600;color:var(--text2)">${tipoBadge(lastTipo)} &nbsp;${lastTipo === 'Promo' ? 'Promociones activas' : lastTipo === 'Estudio' ? 'Estudios / análisis' : 'Archivo'}</td>`;
+      tb.appendChild(sep);
+    }
+    const s = promoStats(p);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${tipoBadge(p.tipo||'Promo')}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <a href="#" style="color:var(--blue);text-decoration:none" onclick="event.preventDefault();currentId='${p.id}';populateSelect();showTab('costes')">${p.nombre}</a>
+          <select onchange="currentPromo().tipo=this.value;saveLocal();renderDashboard()" style="font-size:11px;padding:2px 5px;border-radius:6px" onclick="event.stopPropagation();currentId='${p.id}'">
+            ${['Promo','Estudio','Archivo'].map(t=>`<option${(p.tipo||'Promo')===t?' selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+      </td>
+      <td style="text-align:right">${s.nviv}</td>
+      <td style="text-align:right">${fmtE(s.ingresos)}</td>
+      <td style="text-align:right">${fmtE(s.costes)}</td>
+      <td style="text-align:right">${fmtE(s.margen)}</td>
+      <td style="text-align:right"><span class="${marginClass(s.pct_margen)}">${pct(s.pct_margen)}</span></td>
+      <td style="text-align:right"><span class="${marginClass(s.roi)}">${pct(s.roi)}</span></td>
+      <td style="text-align:right">${Math.round(s.eur_m2u).toLocaleString('es-ES')} €</td>
+      <td style="text-align:right">${fmtE(s.ben_viv)}</td>
+      <td style="text-align:right"><span class="badge badge-blue">${pct(s.pct_ejec)}</span></td>
+      <td><span class="badge ${p.estado==='Entregada'?'badge-green':p.estado==='En obra'?'badge-amber':'badge-blue'}">${p.estado}</span></td>`;
+    tb.appendChild(tr);
+  });
+
+  // ---- Gráficos (solo visibles) ----
+  const labels = visibles.map(p => p.nombre.split(' ').slice(0, 3).join(' '));
+  const ing  = visibles.map(p => Math.round(promoStats(p).ingresos));
+  const cos  = visibles.map(p => Math.round(promoStats(p).costes));
+  const mrg  = visibles.map(p => +((promoStats(p).pct_margen) * 100).toFixed(1));
+  // Color de barras según tipo
+  const barColors = visibles.map(p => (p.tipo||'Promo') === 'Archivo' ? '#D3D1C7' : (p.tipo==='Estudio' ? '#FAC775' : '#85B7EB'));
+  const borderColors = visibles.map(p => (p.tipo||'Promo') === 'Archivo' ? '#888780' : (p.tipo==='Estudio' ? '#EF9F27' : '#378ADD'));
+
+  destroyChart('barChart');
+  charts.barChart = new Chart(E('chart-bar'), {
+    type:'bar', data:{ labels, datasets:[
+      {label:'Ingresos', data:ing, backgroundColor:barColors,  borderColor:borderColors,  borderWidth:1},
+      {label:'Costes',   data:cos, backgroundColor:'#F0997B', borderColor:'#D85A30', borderWidth:1},
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{ticks:{callback:v=>(v/1000000).toFixed(1)+'M€'}, grid:{color:'rgba(128,128,128,.08)'}},
+        x:{ticks:{autoSkip:false, maxRotation:30}}} }
+  });
+
+  destroyChart('margenChart');
+  charts.margenChart = new Chart(E('chart-margen'), {
+    type:'bar', data:{ labels, datasets:[
+      {label:'% Margen', data:mrg, backgroundColor:mrg.map(v=>v>15?'#C0DD97':v>5?'#FAC775':'#F7C1C1'), borderWidth:0},
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{y:{ticks:{callback:v=>v+'%'}, grid:{color:'rgba(128,128,128,.08)'}},
+        x:{ticks:{autoSkip:false, maxRotation:30}}} }
+  });
+}
+
+function destroyChart(key) {
+  if (charts[key]) { try { charts[key].destroy(); } catch(e){} delete charts[key]; }
+}
+
+function mkChart(canvasId, cfg) {
+  if (typeof Chart === 'undefined') {
+    const el = E(canvasId);
+    if (el) el.parentElement.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text3);font-size:12px">Gráfico no disponible sin conexión</div>';
+    return null;
+  }
+  return new Chart(E(canvasId), cfg);
+}
+
+// ==================== SEGUIMIENTO ====================
+function renderSeguimiento() {
+  const p = currentPromo();
+
+  // Chips selector
+  const chips = E('seg-chips'); chips.innerHTML = '';
+  promociones.forEach(promo => {
+    const c = document.createElement('span');
+    c.className = 'chip' + (promo.id === currentId ? ' active' : '');
+    c.textContent = promo.nombre;
+    c.onclick = () => { currentId = promo.id; populateSelect(); renderSeguimiento(); };
+    chips.appendChild(c);
+  });
+
+  calcCostes(p);
+  const c  = calcCostes(p);
+  const v  = calcViviendas(p);
+  const vs = calcVentasStats(p);
+  const solar = p.costes[0]?.items.find(i => i.id === 'solar_precio')?.pres || 0;
+
+  // Ingresos comprometidos (contrato + escrituradas precio venta)
+  const ing_prev      = v.ingresos;
+  const ing_real      = vs.ing_real;
+  const ing_reservado = (p.unidades||[]).filter(u=>u.estado==='Reservada')
+                          .reduce((a,u)=>a+(u.precio_venta||u.precio_lista||0),0);
+  const pct_vend      = vs.total > 0 ? (vs.vendidas + vs.contrato) / vs.total : 0;
+  const desv_costes   = c.tot_ejec - c.tot_pres; // negativo = por debajo presupuesto
+
+  // ---- KPIs ----
+  const margen_prev    = ing_prev - c.tot_pres;           // margen previsto total
+  const margen_real    = ing_real - c.tot_ejec;           // margen real s/comprometido - ejecutado
+  const margen_pct_p   = ing_prev  > 0 ? margen_prev  / ing_prev  : 0;
+  const margen_pct_r   = ing_real  > 0 ? margen_real  / ing_real  : 0;
+  const kpiColor = (real, prev) => real > prev * 1.05 ? 'var(--red)' : real > prev * 0.95 ? 'var(--amber)' : 'var(--green)';
+  const mrgColor = (v) => v > 0.15 ? 'var(--green)' : v > 0.05 ? 'var(--amber)' : 'var(--red)';
+
+  E('seg-kpis').innerHTML = `
+    <div class="mc">
+      <div class="lbl">Costes presupuestados</div>
+      <div class="val">${fmtE(c.tot_pres)}</div>
+      <div class="sub">total promoción</div>
+    </div>
+    <div class="mc">
+      <div class="lbl">Costes ejecutados</div>
+      <div class="val" style="color:${kpiColor(c.tot_ejec, c.tot_pres)}">${fmtE(c.tot_ejec)}</div>
+      <div class="sub">${pct(c.pct_ejec)} ejecutado · ${fmtE(c.pend)} pendiente</div>
+    </div>
+    <div class="mc">
+      <div class="lbl">Ingresos previstos</div>
+      <div class="val">${fmtE(ing_prev)}</div>
+      <div class="sub">precio lista total</div>
+    </div>
+    <div class="mc">
+      <div class="lbl">Ingresos comprometidos</div>
+      <div class="val" style="color:var(--green)">${fmtE(ing_real)}</div>
+      <div class="sub">${pct(ing_prev > 0 ? ing_real / ing_prev : 0)} s/previsto · ${vs.vendidas+vs.contrato} uds</div>
+    </div>
+    <div class="mc" style="border-top:2px solid var(--border)">
+      <div class="lbl">Margen previsto (€)</div>
+      <div class="val" style="color:${mrgColor(margen_pct_p)}">${fmtE(margen_prev)}</div>
+      <div class="sub">${pct(margen_pct_p)} s/ingresos previstos</div>
+    </div>
+    <div class="mc" style="border-top:2px solid var(--border)">
+      <div class="lbl">Margen real comprometido (€)</div>
+      <div class="val" style="color:${mrgColor(margen_pct_r)}">${fmtE(margen_real)}</div>
+      <div class="sub">${pct(margen_pct_r)} s/ingresos comprometidos</div>
+    </div>
+    <div class="mc" style="border-top:2px solid var(--border)">
+      <div class="lbl">Desviación margen</div>
+      <div class="val" style="color:${margen_real>=margen_prev?'var(--green)':'var(--red)'}">${margen_real>=margen_prev?'+':''}${fmtE(margen_real-margen_prev)}</div>
+      <div class="sub">real vs previsto</div>
+    </div>
+    <div class="mc" style="border-top:2px solid var(--border)">
+      <div class="lbl">Repercusión suelo / viv.</div>
+      <div class="val">${fmtE(solar > 0 && v.tot_uds > 0 ? solar / v.tot_uds : 0)}</div>
+      <div class="sub">precio solar / nº viviendas</div>
+    </div>`;
+
+  // ---- Semáforo ----
+  const sem = E('seg-semaforo');
+  const grupos_desv = p.costes.map(g => {
+    const pres = g.items.reduce((a,i)=>a+(i.pres||0),0);
+    const ejec = g.items.reduce((a,i)=>a+(i.ejec||0),0);
+    const desv = pres > 0 ? (ejec - pres) / pres : 0;
+    return { grupo: g.grupo, pres, ejec, desv };
+  }).filter(g => g.pres > 0);
+
+  const semItems = [
+    { label: 'Desviación costes total',   val: c.tot_pres>0?(c.tot_ejec-c.tot_pres)/c.tot_pres:0,  fmt: v => (v>=0?'+':'')+pct(Math.abs(v)), ok: v => v<=0.02, warn: v => v<=0.10 },
+    { label: '% ejecución obra',          val: c.pct_ejec,                                           fmt: pct,                                  ok: v => v>0,   warn: () => true },
+    { label: 'Unidades vendidas/contrato',val: pct_vend,                                             fmt: v => pct(v)+' ('+Math.round(v*(vs.total||1))+'/'+vs.total+')', ok: v => v>0.5, warn: v => v>0.2 },
+    { label: 'Ingresos comprometidos',    val: ing_prev>0?ing_real/ing_prev:0,                       fmt: v => pct(v)+' — '+fmtE(ing_real),     ok: v => v>0.5, warn: v => v>0.2 },
+    { label: 'Margen previsto',           val: ing_prev>0?(ing_prev-c.tot_pres)/ing_prev:0,          fmt: v => pct(v)+' ('+fmtE(ing_prev-c.tot_pres)+')',  ok: v => v>0.15, warn: v => v>0.05 },
+  ];
+
+  sem.innerHTML = `<div class="card-title">Semáforo de estado</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+    ${semItems.map(s => {
+      const isOk = s.ok(s.val), isWarn = !isOk && s.warn(s.val);
+      const col = isOk ? 'var(--green)' : isWarn ? 'var(--amber)' : 'var(--red)';
+      const bg  = isOk ? 'var(--green-l)' : isWarn ? 'var(--amber-l)' : 'var(--red-l)';
+      const dot = isOk ? '●' : isWarn ? '●' : '●';
+      return `<div style="background:${bg};border-radius:var(--radius);padding:10px 14px">
+        <div style="font-size:11px;color:${col};font-weight:600;margin-bottom:4px">${dot} ${s.label}</div>
+        <div style="font-size:18px;font-weight:500;color:${col}">${s.fmt(s.val)}</div>
+      </div>`;
+    }).join('')}
+    </div>`;
+
+  // ---- Gráfico costes ----
+  const gruposLabels = p.costes.map(g => g.grupo.split(' ')[0]);
+  const presList = p.costes.map(g => Math.round(g.items.reduce((a,i)=>a+(i.pres||0),0)));
+  const ejecList = p.costes.map(g => Math.round(g.items.reduce((a,i)=>a+(i.ejec||0),0)));
+  destroyChart('segCostesChart');
+  const hBar = Math.max(280, p.costes.length * 38 + 60);
+  E('chart-seg-costes').parentElement.style.height = hBar + 'px';
+  charts.segCostesChart = new Chart(E('chart-seg-costes'), {
+    type: 'bar',
+    data: { labels: gruposLabels, datasets: [
+      { label:'Presupuestado', data: presList, backgroundColor:'#85B7EB', borderWidth:0 },
+      { label:'Ejecutado',     data: ejecList, backgroundColor:'#1D9E75', borderWidth:0 },
+    ]},
+    options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{ x:{ ticks:{ callback: v => (v/1000).toFixed(0)+'k€' }, grid:{ color:'rgba(128,128,128,.08)' } },
+               y:{ ticks:{ font:{ size:11 } } } } }
+  });
+
+  // ---- Gráfico ventas ----
+  const tipLabels = p.tipologias.map(t => t.tip);
+  const uds = p.unidades || [];
+  const getUdsEstado = (tip, estado) => uds.filter(u => u.tipologia===tip && u.estado===estado).length;
+  const escrit  = p.tipologias.map(t => getUdsEstado(t.tip,'Escriturada'));
+  const contrat = p.tipologias.map(t => getUdsEstado(t.tip,'Contrato'));
+  const reserv  = p.tipologias.map(t => getUdsEstado(t.tip,'Reservada'));
+  const dispon  = p.tipologias.map(t => getUdsEstado(t.tip,'Disponible') || Math.max(0, t.uds - escrit[p.tipologias.indexOf(t)] - contrat[p.tipologias.indexOf(t)] - reserv[p.tipologias.indexOf(t)]));
+  destroyChart('segVentasChart');
+  charts.segVentasChart = new Chart(E('chart-seg-ventas'), {
+    type: 'bar',
+    data: { labels: tipLabels, datasets: [
+      { label:'Escrituradas', data: escrit,  backgroundColor:'#1D9E75', borderWidth:0 },
+      { label:'Contrato',     data: contrat, backgroundColor:'#EF9F27', borderWidth:0 },
+      { label:'Reservadas',   data: reserv,  backgroundColor:'#FAC775', borderWidth:0 },
+      { label:'Disponibles',  data: dispon,  backgroundColor:'#D3D1C7', borderWidth:0 },
+    ]},
+    options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{ x:{ stacked:true, ticks:{ stepSize:1 }, grid:{ color:'rgba(128,128,128,.08)' } },
+               y:{ stacked:true, ticks:{ font:{ size:11 } } } } }
+  });
+
+  // ---- Tabla desviación costes ----
+  const ct = E('seg-costes-tbody'); ct.innerHTML = '';
+  p.costes.forEach(g => {
+    const pres = g.items.reduce((a,i)=>a+(i.pres||0),0);
+    const ejec = g.items.reduce((a,i)=>a+(i.ejec||0),0);
+    const pend = pres - ejec;
+    const pejec = pres > 0 ? ejec / pres : 0;
+    const desv = pres > 0 ? (ejec - pres) : 0;
+    const dPct = pres > 0 ? desv / pres : 0;
+    const dColor = Math.abs(dPct) < 0.02 ? 'var(--green)' : Math.abs(dPct) < 0.10 ? 'var(--amber)' : 'var(--red)';
+    const dBg    = Math.abs(dPct) < 0.02 ? 'var(--green-l)' : Math.abs(dPct) < 0.10 ? 'var(--amber-l)' : 'var(--red-l)';
+    // Progress bar
+    const barW = Math.min(100, pejec * 100).toFixed(1);
+    const barCol = pejec >= 1 ? 'var(--green-m)' : pejec > 0.5 ? 'var(--blue-m)' : 'var(--bg3)';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight:500">${g.grupo}</td>
+      <td style="text-align:right">${fmtE(pres)}</td>
+      <td style="text-align:right">${ejec > 0 ? fmtE(ejec) : '<span style="color:var(--text3)">—</span>'}</td>
+      <td style="text-align:right">${fmtE(pend)}</td>
+      <td style="text-align:right;min-width:110px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden">
+            <div style="width:${barW}%;height:100%;background:${barCol};border-radius:3px"></div>
+          </div>
+          <span style="font-size:11px;white-space:nowrap">${pct(pejec)}</span>
+        </div>
+      </td>
+      <td style="text-align:right">
+        ${pres > 0 ? `<span style="background:${dBg};color:${dColor};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500">
+          ${desv >= 0 ? '+' : ''}${fmtE(desv)} (${desv>=0?'+':''}${(dPct*100).toFixed(1)}%)
+        </span>` : '<span style="color:var(--text3)">—</span>'}
+      </td>
+      <td>
+        ${pejec >= 1 ? '<span class="badge badge-green">Completado</span>' :
+          ejec > 0   ? '<span class="badge badge-amber">En curso</span>' :
+                       '<span class="badge badge-blue">Pendiente</span>'}
+      </td>`;
+    ct.appendChild(tr);
+  });
+  // Fila total
+  const trTot = document.createElement('tr'); trTot.className = 'tr-total';
+  const dTotal = c.tot_ejec - c.tot_pres;
+  const dTotPct = c.tot_pres > 0 ? dTotal / c.tot_pres : 0;
+  const dTotCol = Math.abs(dTotPct)<0.02?'var(--green)':Math.abs(dTotPct)<0.10?'var(--amber)':'var(--red)';
+  const dTotBg  = Math.abs(dTotPct)<0.02?'var(--green-l)':Math.abs(dTotPct)<0.10?'var(--amber-l)':'var(--red-l)';
+  trTot.innerHTML = `
+    <td>TOTAL</td>
+    <td style="text-align:right">${fmtE(c.tot_pres)}</td>
+    <td style="text-align:right">${fmtE(c.tot_ejec)}</td>
+    <td style="text-align:right">${fmtE(c.pend)}</td>
+    <td style="text-align:right">${pct(c.pct_ejec)}</td>
+    <td style="text-align:right"><span style="background:${dTotBg};color:${dTotCol};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500">
+      ${dTotal>=0?'+':''}${fmtE(dTotal)} (${dTotal>=0?'+':''}${(dTotPct*100).toFixed(1)}%)</span></td>
+    <td></td>`;
+  ct.appendChild(trTot);
+
+  // ---- Tabla ventas por tipología ----
+  const vt = E('seg-ventas-tbody'); vt.innerHTML = '';
+  let totUds=0, totDisp=0, totRes=0, totCont=0, totEscr=0, totIngPrev=0, totIngComp=0;
+  p.tipologias.forEach(t => {
+    const uds_tip = (p.unidades||[]).filter(u => u.tipologia === t.tip);
+    const n_escr  = uds_tip.filter(u=>u.estado==='Escriturada').length;
+    const n_cont  = uds_tip.filter(u=>u.estado==='Contrato').length;
+    const n_res   = uds_tip.filter(u=>u.estado==='Reservada').length;
+    // Total = siempre el nº definido en la tipología (no el nº de unidades individuales creadas)
+    const total   = t.uds || 0;
+    const n_disp  = Math.max(0, total - n_escr - n_cont - n_res);
+    const ing_prev_tip = total * (t.precio_lista||0);
+    const ing_comp_tip = uds_tip.filter(u=>['Contrato','Escriturada'].includes(u.estado))
+                           .reduce((a,u)=>a+(u.precio_venta||u.precio_lista||0),0);
+    const pct_v = total > 0 ? (n_escr + n_cont) / total : 0;
+    // Importes: todas las tipologías (incluye trasteros)
+    totIngPrev += ing_prev_tip;
+    totIngComp += ing_comp_tip;
+    // Unidades: solo viviendas con dorm > 0
+    if (t.dorm > 0) {
+      totUds+=total; totDisp+=n_disp; totRes+=n_res; totCont+=n_cont; totEscr+=n_escr;
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight:500">${t.tip}</td>
+      <td style="text-align:right">${total}</td>
+      <td style="text-align:right">${n_disp > 0 ? `<span style="background:#E6F1FB;color:#185FA5;padding:1px 7px;border-radius:10px;font-size:11px">${n_disp}</span>` : '—'}</td>
+      <td style="text-align:right">${n_res  > 0 ? `<span style="background:#FAEEDA;color:#854F0B;padding:1px 7px;border-radius:10px;font-size:11px">${n_res}</span>`  : '—'}</td>
+      <td style="text-align:right">${n_cont > 0 ? `<span style="background:#E1F5EE;color:#0F6E56;padding:1px 7px;border-radius:10px;font-size:11px">${n_cont}</span>` : '—'}</td>
+      <td style="text-align:right">${n_escr > 0 ? `<span style="background:#EAF3DE;color:#3B6D11;padding:1px 7px;border-radius:10px;font-size:11px">${n_escr}</span>` : '—'}</td>
+      <td style="text-align:right">${fmtE(ing_prev_tip)}</td>
+      <td style="text-align:right">${ing_comp_tip > 0 ? fmtE(ing_comp_tip) : '—'}</td>
+      <td style="text-align:right">
+        <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end">
+          <div style="width:60px;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden">
+            <div style="width:${Math.min(100,pct_v*100).toFixed(0)}%;height:100%;background:var(--teal-m);border-radius:3px"></div>
+          </div>
+          <span style="font-size:11px">${pct(pct_v)}</span>
+        </div>
+      </td>`;
+    vt.appendChild(tr);
+  });
+  const trVTot = document.createElement('tr'); trVTot.className = 'tr-total';
+  trVTot.innerHTML = `
+    <td>TOTAL</td>
+    <td style="text-align:right">${totUds}</td>
+    <td style="text-align:right">${totDisp||'—'}</td>
+    <td style="text-align:right">${totRes||'—'}</td>
+    <td style="text-align:right">${totCont||'—'}</td>
+    <td style="text-align:right">${totEscr||'—'}</td>
+    <td style="text-align:right">${fmtE(totIngPrev)}</td>
+    <td style="text-align:right">${totIngComp>0?fmtE(totIngComp):'—'}</td>
+    <td style="text-align:right">${totUds>0?pct((totEscr+totCont)/totUds):'—'}</td>`;
+  vt.appendChild(trVTot);
+}
+
+
+// ==================== SUPERFICIES ====================
+function renderSuperficies() {
+  const p = currentPromo();
+  const s = calcSuperficies(p);
+  E('sup-nplazas').value = p.nplazas;
+  E('sup-nviv').value = p.nviv_input;
+  E('sup-kpis').innerHTML = `
+    <div class="mc"><div class="lbl">m² garaje (sótanos)</div><div class="val">${fmtN(s.gar)} m²</div></div>
+    <div class="mc"><div class="lbl">m² jardín</div><div class="val">${fmtN(s.jar)} m²</div></div>
+    <div class="mc"><div class="lbl">m² vivienda construida</div><div class="val">${fmtN(s.viv)} m²</div><div class="sub">cerrada + 50% abierta cub.</div></div>
+    <div class="mc"><div class="lbl">m² total construido</div><div class="val">${fmtN(s.tot)} m²</div></div>`;
+
+  const tb = E('sup-tbody'); tb.innerHTML = '';
+  p.plantas.forEach((pl, idx) => {
+    const tot = (pl.gar||0)+(pl.jar||0)+(pl.local||0)+(pl.viv||0);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" value="${pl.planta}" onchange="currentPromo().plantas[${idx}].planta=this.value;autoSaveAndRender('superficies')"></td>
+      <td><select onchange="currentPromo().plantas[${idx}].tipo=this.value;autoSaveAndRender('superficies')" style="width:100%">
+        ${['Cerrada','Abierta','Abierta cubierta'].map(t=>`<option${t===pl.tipo?' selected':''}>${t}</option>`).join('')}
+      </select></td>
+      <td><input type="number" value="${pl.gar||''}" placeholder="0" step="0.01" onchange="currentPromo().plantas[${idx}].gar=+this.value||0;autoSaveAndRender('superficies')"></td>
+      <td><input type="number" value="${pl.jar||''}" placeholder="0" step="0.01" onchange="currentPromo().plantas[${idx}].jar=+this.value||0;autoSaveAndRender('superficies')"></td>
+      <td><input type="number" value="${pl.local||''}" placeholder="0" step="0.01" onchange="currentPromo().plantas[${idx}].local=+this.value||0;autoSaveAndRender('superficies')"></td>
+      <td><input type="number" value="${pl.viv||''}" placeholder="0" step="0.01" onchange="currentPromo().plantas[${idx}].viv=+this.value||0;autoSaveAndRender('superficies')"></td>
+      <td style="text-align:right;font-weight:500">${fmtN(tot)}</td>
+      <td><button onclick="currentPromo().plantas.splice(${idx},1);renderSuperficies()" class="danger" style="padding:2px 7px;font-size:11px">×</button></td>`;
+    tb.appendChild(tr);
+  });
+  const tr = document.createElement('tr'); tr.className = 'tr-total';
+  tr.innerHTML = `<td colspan="2">TOTALES</td>
+    <td style="text-align:right">${fmtN(s.gar)}</td><td style="text-align:right">${fmtN(s.jar)}</td>
+    <td style="text-align:right">${fmtN(s.local)}</td><td style="text-align:right">${fmtN(s.viv)}</td>
+    <td style="text-align:right">${fmtN(s.tot)}</td><td></td>`;
+  tb.appendChild(tr);
+
+  // Ratios from VIVIENDAS sheet (D36=tot m²cons, D37=tot m²útil, excl. trasteros)
+  const viv_data = calcViviendas(p);
+  const tot_m2c_viv = viv_data.tot_m2c;   // D36 = SUMPRODUCT uds×m²cons (dorm>0)
+  const tot_m2u_viv = viv_data.tot_m2u;   // D37 = SUMPRODUCT uds×m²útil (dorm>0)
+  const nviv = p.nviv_input || 1;
+  const nplazas = p.nplazas || 1;
+
+  // C48 = m² construido / plaza garaje  (=C41/C45)
+  const c48 = s.gar > 0 && nplazas > 0 ? s.gar / nplazas : null;
+  // C50 = m² vivienda construida / nº viviendas  (=C49/C46)
+  const c50 = s.viv > 0 && nviv > 0 ? s.viv / nviv : null;
+  // C51 = ratio (m²cons_viv_tabla + ZC) / m²cons_superficies  (=VIVIENDAS!D36 / SUPERFICIES!C49)
+  const c51 = s.viv > 0 && tot_m2c_viv > 0 ? tot_m2c_viv / s.viv : null;
+  // C52 = m² construido medio/vivienda = C50 × C51  (=C50*C51)
+  const c52 = c50 != null && c51 != null ? c50 * c51 : null;
+  // C53 = ratio útil/construido  (=VIVIENDAS!D37 / VIVIENDAS!D36)
+  const c53 = tot_m2c_viv > 0 && tot_m2u_viv > 0 ? tot_m2u_viv / tot_m2c_viv : null;
+  // C54 = m² útil medio/vivienda = C52 × C53  (=C52*C53)
+  const c54 = c52 != null && c53 != null ? c52 * c53 : null;
+
+  const sr = E('sup-ratios'); sr.innerHTML = '';
+  const ratioGroups = [
+    { title: 'Garaje', rows: [
+      ['C47 · m² garaje total (sótanos)', fmtN(s.gar) + ' m²', '=Suma columna Garaje'],
+      ['C48 · m² construido / plaza garaje', c48 != null ? fmtN(c48, 2) + ' m²/plaza' : '—', '=m²garaje / nº plazas'],
+    ]},
+    { title: 'Viviendas', rows: [
+      ['C49 · m² vivienda cerrada total', fmtN(s.viv) + ' m²', '=Cerrada + 50% Abierta cubierta'],
+      ['C50 · m² viv. construida / vivienda', c50 != null ? fmtN(c50, 2) + ' m²/viv' : '—', '=m²viv / nº viviendas'],
+      ['C51 · ratio tabla viv / superficies', c51 != null ? c51.toFixed(4) : '—', '=VIVIENDAS.D36 / SUPERFICIES.C49'],
+      ['C52 · m² construido medio / vivienda', c52 != null ? fmtN(c52, 2) + ' m²/viv' : '—', '=C50 × C51'],
+      ['C53 · ratio útil / construido', c53 != null ? c53.toFixed(4) : '—', '=m²útil / m²cons (excl. trasteros)'],
+      ['C54 · m² útil medio / vivienda', c54 != null ? fmtN(c54, 2) + ' m²útil/viv' : '—', '=C52 × C53'],
+    ]},
+    { title: 'Distribución s/total', rows: [
+      ['% vivienda s/total construido', s.tot > 0 ? pct(s.viv / s.tot) : '—', '=m²viv / m²total'],
+      ['% garaje s/total construido', s.tot > 0 ? pct(s.gar / s.tot) : '—', '=m²garaje / m²total'],
+      ['% local s/total construido', s.tot > 0 && s.local > 0 ? pct(s.local / s.tot) : '—', '=m²local / m²total'],
+      ['m² jardín total', fmtN(s.jar) + ' m²', '=Suma columna Jardín'],
+      ['m² local total', fmtN(s.local) + ' m²', '=Suma columna Local'],
+      ['m² total construido', fmtN(s.tot) + ' m²', '=Suma todas las columnas'],
+    ]},
+  ];
+  ratioGroups.forEach(g => {
+    const h = document.createElement('div');
+    h.style.cssText = 'font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;padding:10px 0 4px;border-bottom:1px solid var(--border);margin-bottom:4px';
+    h.textContent = g.title;
+    sr.appendChild(h);
+    g.rows.forEach(([k, v, formula]) => {
+      const d = document.createElement('div'); d.className = 'row-between';
+      d.style.paddingTop = '5px'; d.style.paddingBottom = '5px';
+      d.innerHTML = `<span class="key" style="display:flex;flex-direction:column;gap:1px">
+        <span style="color:var(--text1)">${k}</span>
+        <span style="font-size:10px;color:var(--text3)">${formula}</span>
+      </span><span class="val" style="font-size:14px;white-space:nowrap;margin-left:12px">${v}</span>`;
+      sr.appendChild(d);
+    });
+  });
+}
+
+function addPlanta() {
+  currentPromo().plantas.push({planta:'Nueva planta',tipo:'Cerrada',gar:0,jar:0,local:0,viv:0});
+  renderSuperficies();
+}
+
+// ==================== VIVIENDAS ====================
+let vivTab = 'tipologias';
+function switchVivTab(t) {
+  vivTab = t;
+  E('vtab-tip').classList.toggle('active', t === 'tipologias');
+  E('vtab-uds').classList.toggle('active', t === 'unidades');
+  E('vsec-tipologias').style.display = t === 'tipologias' ? '' : 'none';
+  E('vsec-unidades').style.display = t === 'unidades' ? '' : 'none';
+  if (t === 'unidades') renderUnidades();
+}
+
+const ESTADOS_VIV = ['Disponible','Reservada','Contrato','Escriturada'];
+const ESTADO_COLORS = {
+  'Disponible': {bg:'#E6F1FB', color:'#185FA5'},
+  'Reservada':  {bg:'#FAEEDA', color:'#854F0B'},
+  'Contrato':   {bg:'#E1F5EE', color:'#0F6E56'},
+  'Escriturada':{bg:'#EAF3DE', color:'#3B6D11'},
+};
+
+function calcVentasStats(p) {
+  const uds = p.unidades || [];
+  const total = uds.length;
+  const vendidas = uds.filter(u => u.estado === 'Escriturada').length;
+  const contrato = uds.filter(u => u.estado === 'Contrato').length;
+  const reservadas = uds.filter(u => u.estado === 'Reservada').length;
+  const disponibles = uds.filter(u => u.estado === 'Disponible').length;
+  const ing_real = uds.filter(u => ['Contrato','Escriturada'].includes(u.estado))
+    .reduce((a, u) => a + (u.precio_venta || u.precio_lista || 0), 0);
+  const ing_total = uds.reduce((a, u) => a + (u.precio_lista || 0), 0);
+  return { total, vendidas, contrato, reservadas, disponibles, ing_real, ing_total };
+}
+
+function renderViviendas() {
+  const p = currentPromo();
+  calcCostes(p);
+  const v = calcViviendas(p);
+  const vs = calcVentasStats(p);
+  const uds = p.unidades || [];
+
+  // KPIs
+  const vendidas_pct = vs.total > 0 ? (vs.vendidas + vs.contrato) / vs.total : 0;
+  E('viv-kpis').innerHTML = `
+    <div class="mc"><div class="lbl">Total unidades</div><div class="val">${vs.total > 0 ? vs.total : v.tot_uds}</div><div class="sub">según unidades individuales</div></div>
+    <div class="mc"><div class="lbl">Vendidas / contrato</div><div class="val" style="color:var(--green)">${vs.vendidas + vs.contrato}</div><div class="sub">${pct(vendidas_pct)} del total</div></div>
+    <div class="mc"><div class="lbl">Ingresos comprometidos</div><div class="val">${fmtE(vs.ing_real)}</div><div class="sub">escrituradas + contrato</div></div>
+    <div class="mc"><div class="lbl">Precio medio/unidad</div><div class="val">${fmtE(v.precio_med)}</div><div class="sub">precio lista</div></div>`;
+
+  // Barra de ventas
+  const barEl = E('viv-venta-bar');
+  const legEl = E('viv-venta-legend');
+  const resEl = E('viv-venta-resumen');
+  barEl.innerHTML = ''; legEl.innerHTML = '';
+  if (vs.total > 0) {
+    resEl.textContent = `${vs.vendidas + vs.contrato} vendidas/contrato · ${vs.reservadas} reservadas · ${vs.disponibles} disponibles`;
+    const segmentos = [
+      {label:'Escriturada', n:vs.vendidas},
+      {label:'Contrato',    n:vs.contrato},
+      {label:'Reservada',   n:vs.reservadas},
+      {label:'Disponible',  n:vs.disponibles},
+    ];
+    segmentos.forEach(s => {
+      if (s.n === 0) return;
+      const div = document.createElement('div');
+      div.style.cssText = `flex:${s.n};background:${ESTADO_COLORS[s.label].bg};border:1px solid ${ESTADO_COLORS[s.label].color}20`;
+      div.title = `${s.label}: ${s.n}`;
+      barEl.appendChild(div);
+      const leg = document.createElement('span');
+      leg.style.cssText = 'display:flex;align-items:center;gap:4px';
+      leg.innerHTML = `<span style="width:10px;height:10px;border-radius:2px;background:${ESTADO_COLORS[s.label].bg};border:1px solid ${ESTADO_COLORS[s.label].color};display:inline-block"></span>
+        <span style="color:var(--text1);font-weight:500">${s.n}</span> <span style="color:var(--text2)">${s.label}</span>`;
+      legEl.appendChild(leg);
+    });
+  } else {
+    resEl.textContent = 'Genera unidades para hacer seguimiento de ventas';
+    barEl.innerHTML = `<div style="flex:1;background:var(--bg3);border-radius:6px"></div>`;
+  }
+
+  // Tabla tipologías
+  const tb = E('viv-tbody'); tb.innerHTML = '';
+  p.tipologias.forEach((t, idx) => {
+    const sub = (t.uds||0) * (t.precio_lista||0);
+    const uds_tip = uds.filter(u => u.tipologia === t.tip);
+    const vend_tip = uds_tip.filter(u => ['Contrato','Escriturada'].includes(u.estado)).length;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" value="${t.tip}" onchange="currentPromo().tipologias[${idx}].tip=this.value;autoSaveAndRender('viviendas')"></td>
+      <td><input type="number" value="${t.uds}" min="0" onchange="currentPromo().tipologias[${idx}].uds=+this.value;autoSaveAndRender('viviendas')"></td>
+      <td><input type="number" value="${t.dorm}" min="0" onchange="currentPromo().tipologias[${idx}].dorm=+this.value;autoSaveAndRender('viviendas')"></td>
+      <td><input type="number" value="${t.m2c}" step="0.01" onchange="currentPromo().tipologias[${idx}].m2c=+this.value;autoSaveAndRender('viviendas')"></td>
+      <td><input type="number" value="${t.m2u}" step="0.01" onchange="currentPromo().tipologias[${idx}].m2u=+this.value;autoSaveAndRender('viviendas')"></td>
+      <td><input type="number" value="${t.precio_lista}" onchange="currentPromo().tipologias[${idx}].precio_lista=+this.value;autoSaveAndRender('viviendas')"></td>
+      <td><input type="number" value="${t.precio_venta||t.precio_lista}" onchange="currentPromo().tipologias[${idx}].precio_venta=+this.value;saveLocal()"></td>
+      <td style="text-align:right;font-weight:500">${sub>0?Math.round(sub).toLocaleString('es-ES')+' €':'—'}</td>
+      <td><input type="text" value="${t.notas||''}" onchange="currentPromo().tipologias[${idx}].notas=this.value;saveLocal()"></td>
+      <td style="display:flex;gap:4px;align-items:center">
+        ${uds_tip.length > 0 ? `<span style="font-size:10px;color:var(--green);white-space:nowrap">${vend_tip}/${uds_tip.length}</span>` : ''}
+        <button onclick="currentPromo().tipologias.splice(${idx},1);renderViviendas()" class="danger" style="padding:2px 7px;font-size:11px">×</button>
+      </td>`;
+    tb.appendChild(tr);
+  });
+  const tr = document.createElement('tr'); tr.className = 'tr-total';
+  const tot_uds_viv = p.tipologias.filter(t => t.dorm > 0).reduce((a,t) => a + (t.uds||0), 0);
+  tr.innerHTML = `
+    <td>TOTAL</td>
+    <td style="text-align:right">${tot_uds_viv}</td>
+    <td colspan="5" style="color:var(--text3);font-size:11px;text-align:right">uds con dorm &gt; 0 · ingresos todas las tipologías →</td>
+    <td style="text-align:right">${Math.round(v.ingresos).toLocaleString('es-ES')} €</td>
+    <td colspan="2"></td>`;
+  tb.appendChild(tr);
+}
+
+function renderUnidades() {
+  const p = currentPromo();
+  if (!p.unidades) p.unidades = [];
+
+  // Populate filtro tipo
+  const ftipo = E('viv-filtro-tipo');
+  const selTipo = ftipo.value;
+  ftipo.innerHTML = '<option value="">Todas las tipologías</option>';
+  p.tipologias.forEach(t => { ftipo.innerHTML += `<option value="${t.tip}"${t.tip===selTipo?' selected':''}>${t.tip}</option>`; });
+
+  const filtroTipo = E('viv-filtro-tipo').value;
+  const filtroEstado = E('viv-filtro-estado').value;
+
+  let uds = p.unidades;
+  if (filtroTipo) uds = uds.filter(u => u.tipologia === filtroTipo);
+  if (filtroEstado) uds = uds.filter(u => u.estado === filtroEstado);
+
+  const tb = E('viv-uds-tbody'); tb.innerHTML = '';
+  uds.forEach((u) => {
+    const realIdx = p.unidades.indexOf(u);
+    const ec = ESTADO_COLORS[u.estado] || ESTADO_COLORS['Disponible'];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" value="${u.ref||''}" placeholder="P1-A" onchange="currentPromo().unidades[${realIdx}].ref=this.value;saveLocal()" style="width:80px"></td>
+      <td><select onchange="currentPromo().unidades[${realIdx}].tipologia=this.value;saveLocal()" style="width:100%">
+        ${p.tipologias.map(t=>`<option value="${t.tip}"${t.tip===u.tipologia?' selected':''}>${t.tip}</option>`).join('')}
+      </select></td>
+      <td><input type="text" value="${u.planta||''}" placeholder="1ª" onchange="currentPromo().unidades[${realIdx}].planta=this.value;saveLocal()" style="width:65px"></td>
+      <td><select onchange="currentPromo().unidades[${realIdx}].orientacion=this.value;saveLocal()" style="width:100%">
+        ${['—','Norte','Sur','Este','Oeste','N-E','N-O','S-E','S-O','Exterior','Interior'].map(o=>`<option${o===u.orientacion?' selected':''}>${o}</option>`).join('')}
+      </select></td>
+      <td style="text-align:right">${fmtN(u.m2c||0,1)}</td>
+      <td style="text-align:right">${fmtN(u.m2u||0,1)}</td>
+      <td style="text-align:right">${u.precio_lista?Math.round(u.precio_lista).toLocaleString('es-ES')+' €':'—'}</td>
+      <td><input type="number" value="${u.precio_venta||u.precio_lista||''}" placeholder="precio venta" onchange="currentPromo().unidades[${realIdx}].precio_venta=+this.value;saveLocal();renderViviendas()" style="width:110px;text-align:right"></td>
+      <td>
+        <select onchange="setEstadoUnidad(${realIdx},this.value)" style="background:${ec.bg};color:${ec.color};border-color:${ec.color}40;font-weight:500;width:100%">
+          ${ESTADOS_VIV.map(e=>`<option${e===u.estado?' selected':''}>${e}</option>`).join('')}
+        </select>
+      </td>
+      <td><input type="text" value="${u.comprador||''}" placeholder="Nombre comprador" onchange="currentPromo().unidades[${realIdx}].comprador=this.value;saveLocal()" style="width:110px"></td>
+      <td><input type="date" value="${u.fecha||''}" onchange="currentPromo().unidades[${realIdx}].fecha=this.value;saveLocal()" style="width:120px;font-size:11px"></td>
+      <td><input type="text" value="${u.notas||''}" onchange="currentPromo().unidades[${realIdx}].notas=this.value;saveLocal()" style="width:90px"></td>
+      <td><button onclick="currentPromo().unidades.splice(${realIdx},1);renderViviendas();renderUnidades()" class="danger" style="padding:2px 7px;font-size:11px">×</button></td>`;
+    tb.appendChild(tr);
+  });
+
+  if (uds.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="13" style="text-align:center;padding:20px;color:var(--text3)">
+      ${p.unidades.length === 0 ? 'Pulsa "Generar unidades" para crear una fila por cada unidad de las tipologías, o añádelas manualmente.' : 'No hay unidades con ese filtro.'}
+    </td>`;
+    tb.appendChild(tr);
+  }
+}
+
+function setEstadoUnidad(idx, estado) {
+  const p = currentPromo();
+  p.unidades[idx].estado = estado;
+  if (estado === 'Disponible') { p.unidades[idx].comprador = ''; p.unidades[idx].fecha = ''; }
+  saveLocal();
+  renderViviendas();
+  renderUnidades();
+}
+
+function generarUnidades() {
+  const p = currentPromo();
+  if (p.unidades && p.unidades.length > 0) {
+    if (!confirm('Ya existen unidades individuales. ¿Regenerar (se perderán los datos de ventas actuales)?')) return;
+  }
+  p.unidades = [];
+  const plantas = ['Baja','1ª','2ª','3ª','4ª','5ª','6ª','7ª','8ª','9ª','10ª'];
+  const orientaciones = ['S-E','S-O','N-E','N-O','Sur','Norte','Este','Oeste'];
+  p.tipologias.forEach(t => {
+    const n = t.uds || 0;
+    for (let i = 0; i < n; i++) {
+      const planta = plantas[Math.min(Math.floor(i / 3), plantas.length-1)];
+      const letra = String.fromCharCode(65 + (i % 4));
+      p.unidades.push({
+        ref: `${planta}-${letra}${i+1}`,
+        tipologia: t.tip,
+        planta,
+        orientacion: orientaciones[i % orientaciones.length],
+        m2c: t.m2c || 0,
+        m2u: t.m2u || 0,
+        precio_lista: t.precio_lista || 0,
+        precio_venta: t.precio_venta || t.precio_lista || 0,
+        estado: 'Disponible',
+        comprador: '',
+        fecha: '',
+        notas: '',
+      });
+    }
+  });
+  saveLocal();
+  renderViviendas();
+  switchVivTab('unidades');
+  notify(`${p.unidades.length} unidades generadas`);
+}
+
+function addUnidad() {
+  const p = currentPromo();
+  if (!p.unidades) p.unidades = [];
+  const t = p.tipologias[0] || {};
+  p.unidades.push({
+    ref: 'Nueva-' + (p.unidades.length + 1),
+    tipologia: t.tip || '',
+    planta: '', orientacion: '—',
+    m2c: t.m2c || 0, m2u: t.m2u || 0,
+    precio_lista: t.precio_lista || 0,
+    precio_venta: t.precio_lista || 0,
+    estado: 'Disponible', comprador: '', fecha: '', notas: '',
+  });
+  saveLocal();
+  renderUnidades();
+}
+
+function addTipologia() {
+  currentPromo().tipologias.push({tip:'Nuevo tipo',uds:1,dorm:2,m2c:80,m2u:62,precio_lista:300000,precio_venta:300000,notas:''});
+  renderViviendas();
+}
+
+// ==================== COSTES ====================
+function renderCostes() {
+  const p = currentPromo();
+  calcCostes(p);
+  const c = calcCostes(p);
+  E('cos-kpis').innerHTML = `
+    <div class="mc"><div class="lbl">Presupuesto total</div><div class="val">${fmtE(c.tot_pres)}</div></div>
+    <div class="mc"><div class="lbl">Ejecutado</div><div class="val">${fmtE(c.tot_ejec)}</div></div>
+    <div class="mc"><div class="lbl">Pendiente</div><div class="val">${fmtE(c.pend)}</div></div>
+    <div class="mc"><div class="lbl">% ejecutado</div><div class="val">${pct(c.pct_ejec)}</div>
+      <div class="pbar"><div class="pbar-fill ${c.pct_ejec>0.8?'':c.pct_ejec>0.4?'warn':''}" style="width:${(c.pct_ejec*100).toFixed(1)}%"></div></div>
+    </div>`;
+
+  // Inputs globales editables
+  const cg = E('cos-groups'); cg.innerHTML = '';
+  const globCard = document.createElement('div'); globCard.className = 'card';
+  globCard.style.marginBottom = '14px';
+  globCard.innerHTML = `
+    <div class="card-title">Inputs globales <span style="font-size:11px;font-weight:400;color:var(--text2);text-transform:none;letter-spacing:0">— base para los cálculos automáticos de toda la hoja</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+      <div class="form-row" style="margin:0">
+        <label style="font-size:11px">PEM Licencia (€) <span style="color:var(--text3)">— base Tasa Urb., ICIO, técnicos, notaría, seguros</span></label>
+        <input type="number" value="${p.pem_licencia||4831956}" step="1000"
+          onchange="currentPromo().pem_licencia=+this.value;renderCostes();saveLocal()">
+      </div>
+      <div class="form-row" style="margin:0">
+        <label style="font-size:11px">Importe préstamo promotor (€) <span style="color:var(--text3)">— base intereses construcción</span></label>
+        <input type="number" value="${p.prestamo||7650000}" step="10000"
+          onchange="currentPromo().prestamo=+this.value;renderCostes();saveLocal()">
+      </div>
+      <div class="form-row" style="margin:0">
+        <label style="font-size:11px">Plazo de construcción (meses) <span style="color:var(--text3)">— base monitoring, avales, intereses</span></label>
+        <input type="number" value="${p.cf_plazo||24}" min="1" max="60"
+          onchange="currentPromo().cf_plazo=+this.value;renderCostes();saveLocal()">
+      </div>
+      <div class="form-row" style="margin:0">
+        <label style="font-size:11px">Hipoteca máx. (€) <span style="color:var(--text3)">— base apertura, AJD hip., estudio</span></label>
+        <input type="number" value="${Math.round(c.hip_max||0)}" readonly style="background:var(--bg1);color:var(--text2)" title="= Préstamo × 1,3 — calculado automáticamente">
+        <div class="hint">= Préstamo × 1,3 — automático</div>
+      </div>
+      <div class="form-row" style="margin:0">
+        <label style="font-size:11px">Resp. hipotecaria (€) <span style="color:var(--text3)">— base notaría/registro hip.</span></label>
+        <input type="number" value="${Math.round(c.resp_hip||0)}" readonly style="background:var(--bg1);color:var(--text2)" title="= Préstamo × 1,3 — calculado automáticamente">
+        <div class="hint">= Préstamo × 1,3 — automático</div>
+      </div>
+    </div>`;
+  cg.appendChild(globCard);
+  p.costes.forEach((g, gi) => {
+    const gpres = g.items.reduce((a, i) => a + (i.pres||0), 0);
+    const gejec = g.items.reduce((a, i) => a + (i.ejec||0), 0);
+    const gpct = gpres > 0 ? gejec / gpres : 0;
+
+    const div = document.createElement('div'); div.className = 'card';
+    let rows = g.items.map((it, ii) => {
+      const ppct = it.pres > 0 ? (it.ejec||0) / it.pres : 0;
+      const ejPill = `<span class="${pillClass(ppct)}">${pct(ppct)}</span>`;
+      const isDirecto = it.formula === 'directo';
+
+      // Determina si es fórmula con factor (pemlic × % × factor)
+      const hasFactorFormula = it.formula && it.formula.match(/pemlic×\d/);
+      const hasPct  = it.pct_val  !== null && it.pct_val  !== undefined;
+      const hasUnit = it.coste_unit !== null && it.coste_unit !== undefined;
+
+      // Columna Canal
+      const canalCell = it.canal != null
+        ? `<span style="font-size:10px;color:var(--text3);font-family:monospace">${it.canal}</span>`
+        : '';
+
+      // Columna E: Base / Uds — valor real calculado, editable para sobreescribir
+      const baseCalc = (() => {
+        const f = it.formula;
+        const c2 = calcCostes(p); // ya calculado, reutilizamos valores
+        const solar2 = p.costes[0]?.items.find(i=>i.id==='solar_precio')?.pres || 0;
+        const PEMLIC2 = p.pem_licencia || 4831956;
+        const prestamo2 = p.prestamo || 7650000;
+        const viv2 = calcViviendas(p);
+        const hip_max2 = prestamo2 * 1.3;
+        const resp_hip2 = hip_max2;
+        const avales2 = (viv2.ingresos * 0.2) + (0.1 * viv2.ingresos * 0.2 + 3 * 0.03 * viv2.ingresos * 0.2);
+        const meses2 = parseInt(p.cf_plazo) || 24;
+        const nviv2 = viv2.tot_uds > 0 ? viv2.tot_uds : (p.nviv_input || 0);
+        const sup2 = calcSuperficies(p);
+        switch(f) {
+          case 'solar×%':
+          case 'pemlic_solar×%': return solar2;
+          case 'pemlic×%':
+          case 'pemlic×5%×49%': case 'pemlic×5%×21%': case 'pemlic×5%×15%':
+          case 'pemlic×5%×70%': case 'pemlic×5%×30%': return PEMLIC2;
+          case 'hipmax×%':      return Math.round(hip_max2);
+          case 'resp_hip×%':    return Math.round(resp_hip2);
+          case 'prestamo×%':
+          case 'cap×tipo×meses': return prestamo2;
+          case 'avales×%':
+          case 'avales×%×meses': return Math.round(avales2);
+          case 'ingresos×%':    return Math.round(viv2.ingresos);
+          case 'meses×€':       return meses2;
+          case 'nviv×€':        return nviv2;
+          case 'm²_viv×€/m²':   return Math.round(sup2.viv);
+          case 'm²_gar×€/m²':   return Math.round(sup2.gar);
+          case 'm²_local×€/m²': return Math.round(sup2.local);
+          case 'm²_jar×€/m²':   return Math.round(sup2.jar);
+          default: return it.base_val || null;
+        }
+      })();
+      const baseVal = it.base_override !== undefined ? it.base_override : baseCalc;
+      const baseOverridden = it.base_override !== undefined && it.base_override !== null;
+      const baseStyle = isDirecto ? '' : baseOverridden
+        ? 'background:#FFFBEA;border-color:#F0C040;color:#1A1A1A;font-weight:500'
+        : 'background:var(--bg1);color:var(--text2)';
+      const baseCell = isDirecto
+        ? `<input type="number" value="${Math.round(it.base_val||0)}" style="width:90px;font-size:11px;padding:2px 4px"
+            onchange="currentPromo().costes[${gi}].items[${ii}].base_val=+this.value;renderCostes();saveLocal()">`
+        : `<div style="display:flex;gap:2px;align-items:center">
+            <input type="number" value="${baseVal != null ? Math.round(baseVal) : ''}"
+              style="width:86px;font-size:11px;padding:2px 4px;${baseStyle}"
+              placeholder="auto" title="${baseOverridden ? 'Base sobreescrita — borra para restaurar automático' : 'Base calculada automáticamente — edita para sobreescribir'}"
+              onchange="
+                const v=+this.value;
+                const ci=currentPromo().costes[${gi}].items[${ii}];
+                ci.base_override=v;
+                renderCostes();saveLocal()">
+            ${baseOverridden ? `<button onclick="delete currentPromo().costes[${gi}].items[${ii}].base_override;renderCostes();saveLocal()" title="Restaurar base automática" style="padding:2px 5px;font-size:10px;color:#7A5800;border:1px solid #F0C040;background:#FFFBEA;border-radius:4px;cursor:pointer">↺</button>` : ''}
+          </div>`;
+
+      // F: % editable siempre
+      let fCell = '<span style="color:var(--text3);font-size:11px">—</span>';
+      if (hasPct && hasUnit && hasFactorFormula) {
+        const dp = +(it.pct_val * 100).toFixed(3);
+        const df = +(it.coste_unit * 100).toFixed(2);
+        fCell = `<div style="display:flex;align-items:center;gap:2px">
+          <input type="number" value="${dp}" step="0.1" min="0" max="100" style="width:48px;font-size:11px;padding:2px 3px" title="% base"
+            onchange="currentPromo().costes[${gi}].items[${ii}].pct_val=+this.value/100;renderCostes();saveLocal()">
+          <span style="font-size:10px;color:var(--text3)">%×</span>
+          <input type="number" value="${df}" step="1" min="0" max="100" style="width:40px;font-size:11px;padding:2px 3px" title="Factor %"
+            onchange="currentPromo().costes[${gi}].items[${ii}].coste_unit=+this.value/100;renderCostes();saveLocal()">
+          <span style="font-size:10px;color:var(--text3)">%</span>
+        </div>`;
+      } else if (hasPct) {
+        const dp = +(it.pct_val * 100).toFixed(4);
+        fCell = `<div style="display:flex;align-items:center;gap:2px">
+          <input type="number" value="${dp}" step="0.001" min="0" max="100" style="width:68px;font-size:11px;padding:2px 4px;text-align:right"
+            onchange="currentPromo().costes[${gi}].items[${ii}].pct_val=+this.value/100;renderCostes();saveLocal()">
+          <span style="font-size:10px;color:var(--text2)">%</span>
+        </div>`;
+      }
+
+      // G: coste unit editable — meses para fórmulas temporales, €/u para el resto
+      let gCell = '<span style="color:var(--text3);font-size:11px">—</span>';
+      const isMesesFormula = it.formula === 'cap×tipo×meses' || it.formula === 'avales×%×meses';
+      if (isMesesFormula) {
+        const mesesVal = it.coste_unit != null ? it.coste_unit : (parseInt(p.cf_plazo)||24);
+        gCell = `<div style="display:flex;align-items:center;gap:2px">
+          <input type="number" value="${mesesVal}" step="1" min="1" max="120" style="width:52px;font-size:11px;padding:2px 4px;text-align:right"
+            title="Nº meses para el cálculo"
+            onchange="currentPromo().costes[${gi}].items[${ii}].coste_unit=+this.value;renderCostes();saveLocal()">
+          <span style="font-size:10px;color:var(--text2)">m</span>
+        </div>`;
+      } else if (hasUnit && !hasFactorFormula) {
+        gCell = `<div style="display:flex;align-items:center;gap:2px">
+          <input type="number" value="${it.coste_unit}" step="1" min="0" style="width:72px;font-size:11px;padding:2px 4px;text-align:right"
+            onchange="currentPromo().costes[${gi}].items[${ii}].coste_unit=+this.value;renderCostes();saveLocal()">
+          <span style="font-size:10px;color:var(--text2)">€/u</span>
+        </div>`;
+      }
+
+      // Columna Presupuesto — siempre editable; fondo distinto si tiene fórmula automática
+      const isOverridden = !isDirecto && it.pres_override !== undefined && it.pres_override !== null;
+      const inputClass = isDirecto ? '' : isOverridden ? 'pres-override' : 'pres-formula';
+      const inputTitle = isDirecto ? '' : isOverridden
+        ? 'Importe sobreescrito — pulsa ↺ para volver a la fórmula'
+        : 'Calculado por fórmula — puedes editarlo para sobreescribir';
+      const presCell = `<div style="display:flex;gap:4px;align-items:center">
+        <input type="number" value="${Math.round(isOverridden ? it.pres_override : (it.pres||0))}"
+          class="${inputClass}" title="${inputTitle}"
+          onchange="
+            const v=+this.value;
+            const ci=currentPromo().costes[${gi}].items[${ii}];
+            if(ci.formula==='directo'){ci.pres=v;ci.base_val=v;}
+            else{ci.pres_override=v;ci.pres=v;}
+            renderCostes();saveLocal()">
+        ${isOverridden ? `<button onclick="delete currentPromo().costes[${gi}].items[${ii}].pres_override;renderCostes();saveLocal()" title="Volver a la fórmula" style="padding:2px 6px;font-size:11px;color:#7A5800;border:1px solid #F0C040;background:#FFFBEA;border-radius:4px;cursor:pointer;flex-shrink:0">↺</button>` : ''}
+      </div>`;
+
+      return `<tr>
+        <td style="min-width:30px;text-align:center">${canalCell}</td>
+        <td style="min-width:200px">${it.concepto}</td>
+        <td style="min-width:110px;color:var(--text3);font-size:11px">${it.notas}</td>
+        <td style="min-width:100px;text-align:right">${baseCell}</td>
+        <td style="min-width:100px;text-align:right">${fCell}</td>
+        <td style="min-width:90px;text-align:right">${gCell}</td>
+        <td style="min-width:120px">${presCell}</td>
+        <td style="min-width:120px"><input type="number" value="${Math.round(it.ejec||0)}"
+          onchange="currentPromo().costes[${gi}].items[${ii}].ejec=+this.value;renderCostes();saveLocal()"></td>
+        <td style="text-align:right;min-width:110px">${fmtE((it.pres||0)-(it.ejec||0))}</td>
+        <td style="text-align:right;min-width:80px">${ejPill}</td>
+      </tr>`;
+    }).join('');
+
+    div.innerHTML = `
+      <div class="card-title">
+        ${g.grupo}
+        <span class="badge badge-blue">${fmtE(gpres)}</span>
+        <span class="badge ${gpct>=0.99?'badge-green':gpct>0?'badge-amber':'badge-blue'}">${pct(gpct)} ejec.</span>
+      </div>
+      <div class="tbl-wrap"><table style="table-layout:auto">
+        <thead><tr>
+          <th style="text-align:center;min-width:40px">Cód.</th>
+          <th>Concepto</th><th>Notas / fórmula</th>
+          <th style="text-align:center">Base / Uds</th>
+          <th style="text-align:center">% / ratio</th>
+          <th style="text-align:center">€/ud</th>
+          <th style="text-align:right">Presupuesto (€)</th>
+          <th style="text-align:right">Ejecutado (€)</th>
+          <th style="text-align:right">Pendiente (€)</th>
+          <th style="text-align:right">% Ejec.</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr class="tr-total">
+          <td colspan="6">Subtotal ${g.grupo}</td>
+          <td style="text-align:right">${fmtE(gpres)}</td>
+          <td style="text-align:right">${fmtE(gejec)}</td>
+          <td style="text-align:right">${fmtE(gpres-gejec)}</td>
+          <td style="text-align:right"><span class="${pillClass(gpct)}">${pct(gpct)}</span></td>
+        </tr></tfoot>
+      </table></div>`;
+    cg.appendChild(div);
+  });
+}
+
+// ==================== CASHFLOW ====================
+function renderCashflow() {
+  const p = currentPromo();
+  calcCostes(p);
+  const viv = calcViviendas(p);
+  const c = calcCostes(p);
+  const plazo = parseInt(E('cf-plazo')?.value || 24);
+  const preventa = parseFloat(E('cf-preventa')?.value || 20) / 100;
+  const pago1pct = parseFloat(E('cf-pago1')?.value || 35) / 100;
+
+  E('cf-promo-name').textContent = p.nombre;
+
+  const ing = viv.ingresos;
+  const cos = c.tot_pres;
+  const solar_g = p.costes[0].items.reduce((a, i) => a + (i.pres||0), 0);
+  const licencias = p.costes[2].items.reduce((a, i) => a + (i.pres||0), 0);
+  const financieros = p.costes[3].items.reduce((a, i) => a + (i.pres||0), 0);
+  const tecnicos = p.costes.slice(6, 8).reduce((a, g) => a + g.items.reduce((b, i) => b + (i.pres||0), 0), 0);
+  const ejecucion = p.costes[1].items.reduce((a, i) => a + (i.pres||0), 0);
+  const comerciales = p.costes[4].items.reduce((a, i) => a + (i.pres||0), 0);
+  const resto = cos - solar_g - licencias - financieros - tecnicos - ejecucion - comerciales;
+
+  const preventa_meses = Math.max(2, Math.round(plazo * 0.4));
+  const cobros = Array.from({length: plazo}, (_, i) => {
+    const m = i + 1;
+    if (m <= preventa_meses) return (ing * preventa) / preventa_meses;
+    if (m === plazo) return ing * (1 - preventa);
+    return 0;
+  });
+
+  const pagos_m1 = (solar_g + licencias + financieros * 0.25 + tecnicos * 0.5) * pago1pct / pago1pct;
+  const pagos_construccion = ejecucion / plazo;
+  const pagos = Array.from({length: plazo}, (_, i) => {
+    const m = i + 1;
+    if (m === 1) return pagos_m1;
+    if (m === plazo) return financieros * 0.15 + comerciales * 0.15 + resto * 0.5;
+    return pagos_construccion + (financieros * 0.6 / (plazo-2)) + (comerciales * 0.85 / (plazo-2)) + (tecnicos * 0.5 / (plazo-2));
+  });
+
+  let acum = 0;
+  const acums = pagos.map((_, i) => { acum += cobros[i] - pagos[i]; return Math.round(acum); });
+  const maxExpos = Math.abs(Math.min(0, ...acums));
+
+  E('cf-kpis').innerHTML = `
+    <div class="mc"><div class="lbl">Ingresos totales</div><div class="val">${fmtE(ing)}</div></div>
+    <div class="mc"><div class="lbl">Máx. exposición financiera</div><div class="val">${fmtE(maxExpos)}</div><div class="sub">necesidad máx. de fondos</div></div>
+    <div class="mc"><div class="lbl">Saldo final</div><div class="val" style="color:${acum>0?'var(--green)':'var(--red)'}">${fmtE(acum)}</div></div>
+    <div class="mc"><div class="lbl">Margen sobre coste</div><div class="val">${cos>0?pct((ing-cos)/cos):'—'}</div><div class="sub">ROI aprox.</div></div>`;
+
+  destroyChart('cfChart');
+  charts.cfChart = new Chart(E('chart-cf'), {
+    type:'bar',
+    data: {
+      labels: Array.from({length: plazo}, (_, i) => 'M' + (i+1)),
+      datasets:[
+        {type:'bar', label:'Cobros', data:cobros.map(v=>Math.round(v)), backgroundColor:'#C0DD97', borderWidth:0, yAxisID:'y'},
+        {type:'bar', label:'Pagos',  data:pagos.map(v=>-Math.round(v)), backgroundColor:'#F5C4B3', borderWidth:0, yAxisID:'y'},
+        {type:'line', label:'Acumulado', data:acums, borderColor:acums.map(v=>v>=0?'#185FA5':'#E24B4A'), backgroundColor:'transparent',
+          borderWidth:2, pointRadius:acums.length<=24?3:1, tension:0.3, yAxisID:'y2'},
+      ]
+    },
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        y:{ticks:{callback:v=>(Math.abs(v)/1000).toFixed(0)+'k€'}, grid:{color:'rgba(128,128,128,.08)'}},
+        y2:{position:'right', ticks:{callback:v=>(v/1000).toFixed(0)+'k€'}, grid:{display:false}},
+        x:{ticks:{autoSkip:plazo>18, maxRotation:0, font:{size:10}}}
+      }}
+  });
+
+  const tb = E('cf-tbody'); tb.innerHTML = '';
+  let acumRow = 0;
+  pagos.forEach((_, i) => {
+    const m = i + 1;
+    acumRow += cobros[i] - pagos[i];
+    const saldo = Math.round(cobros[i] - pagos[i]);
+    const hito = m===1?'Inicio obra · Solar':m===Math.round(plazo*0.5)?'50% ejecución':m===plazo?'Entrega · Cobro final':'';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight:${m===1||m===plazo?500:400}">Mes ${m}</td>
+      <td style="text-align:right">${Math.round(cobros[i]).toLocaleString('es-ES')} €</td>
+      <td style="text-align:right">${Math.round(pagos[i]).toLocaleString('es-ES')} €</td>
+      <td style="text-align:right"><span class="badge ${saldo>=0?'badge-green':'badge-red'}">${saldo.toLocaleString('es-ES')} €</span></td>
+      <td style="text-align:right"><span class="badge ${Math.round(acumRow)>=0?'badge-green':'badge-red'}">${Math.round(acumRow).toLocaleString('es-ES')} €</span></td>
+      <td style="font-size:11px;color:var(--text2)">${hito}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+// ==================== MODALS ====================
+function showNewPromoModal() {
+  E('modal-title').textContent = 'Nueva promoción';
+  E('modal-body').innerHTML = `
+    <div class="form-row"><label>Nombre de la promoción *</label><input type="text" id="np-nombre" placeholder="Ej: Calle Goya 44, Zaragoza" autofocus></div>
+    <div class="form-grid">
+      <div class="form-row"><label>Tipo</label>
+        <select id="np-tipo">
+          <option value="Promo">Promo — promoción activa</option>
+          <option value="Estudio">Estudio — análisis / viabilidad</option>
+          <option value="Archivo">Archivo — histórico / descartada</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Estado inicial</label>
+        <select id="np-estado"><option>En proyecto</option><option>En licencia</option><option>En obra</option><option>Entregada</option></select>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="form-grid">
+      <div class="form-row"><label>Nº viviendas</label><input type="number" id="np-nviv" value="20" min="1"></div>
+      <div class="form-row"><label>Nº plazas garaje</label><input type="number" id="np-ngar" value="20" min="0"></div>
+      <div class="form-row"><label>m² vivienda construida (total)</label><input type="number" id="np-mviv" value="1600" min="1"></div>
+      <div class="form-row"><label>m² garaje (total sótanos)</label><input type="number" id="np-mgar" value="400" min="0"></div>
+      <div class="form-row"><label>Precio solar (€)</label><input type="number" id="np-solar" value="1500000" min="0"></div>
+      <div class="form-row"><label>Precio medio vivienda (€)</label><input type="number" id="np-pviv" value="320000" min="0"></div>
+    </div>`;
+  E('modal-buttons').innerHTML = `
+    <button onclick="closeModal()">Cancelar</button>
+    <button class="primary" onclick="crearPromo()">Crear promoción</button>`;
+  E('modal').style.display = 'flex';
+}
+
+function closeModal() { E('modal').style.display = 'none'; }
+
+function crearPromo() {
+  const nombre = E('np-nombre').value.trim() || 'Nueva promoción';
+  const nviv = parseInt(E('np-nviv').value) || 20;
+  const ngar = parseInt(E('np-ngar').value) || 20;
+  const mviv = parseFloat(E('np-mviv').value) || 1600;
+  const mgar = parseFloat(E('np-mgar').value) || 400;
+  const solar = parseFloat(E('np-solar').value) || 1500000;
+  const pviv = parseFloat(E('np-pviv').value) || 320000;
+  const estado = E('np-estado').value;
+  const tipo = E('np-tipo').value;
+
+  const p = mkPromocion(nombre, {
+    nviv_input: nviv, nplazas: ngar, estado, tipo,
+    plantas: [
+      {planta:'Sótano -1',tipo:'Cerrada',gar:mgar,jar:0,local:0,viv:0},
+      {planta:'Baja',tipo:'Abierta',gar:0,jar:0,local:0,viv:0},
+      {planta:'Baja',tipo:'Cerrada',gar:0,jar:0,local:0,viv:mviv*0.12},
+      {planta:'Primera',tipo:'Cerrada',gar:0,jar:0,local:0,viv:mviv*0.2},
+      {planta:'Segunda',tipo:'Cerrada',gar:0,jar:0,local:0,viv:mviv*0.2},
+      {planta:'Tercera',tipo:'Cerrada',gar:0,jar:0,local:0,viv:mviv*0.2},
+      {planta:'Cuarta',tipo:'Cerrada',gar:0,jar:0,local:0,viv:mviv*0.15},
+      {planta:'Quinta (atico)',tipo:'Abierta cubierta',gar:0,jar:0,local:0,viv:mviv*0.06},
+      {planta:'Quinta (atico)',tipo:'Cerrada',gar:0,jar:0,local:0,viv:mviv*0.07},
+    ],
+    tipologias: [
+      {tip:'Tipología principal',uds:nviv,dorm:2,m2c:Math.round(mviv/nviv),m2u:Math.round(mviv/nviv*0.78),precio_lista:pviv,precio_venta:pviv,notas:''},
+    ],
+  });
+  p.costes[0].items[0].pres = solar;
+  p.costes[0].items[0].base_val = solar;
+  promociones.push(p);
+  currentId = p.id;
+  closeModal();
+  populateSelect();
+  saveLocal();
+  notify('Promoción "' + nombre + '" creada');
+  showTab('costes');
+}
+
+function eliminarPromo(id) {
+  if (promociones.length <= 1) { notify('Debe haber al menos una promoción'); return; }
+  if (!confirm('¿Eliminar esta promoción? Esta acción no se puede deshacer.')) return;
+  promociones = promociones.filter(p => p.id !== id);
+  currentId = promociones[0].id;
+  populateSelect();
+  saveLocal();
+  renderDashboard();
+}
+
+// ==================== IMPORT / EXPORT ====================
+function exportarJSON() {
+  const blob = new Blob([JSON.stringify(promociones, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'promomanager_datos_' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  notify('Datos exportados');
+}
+
+function importarJSON(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!Array.isArray(data)) throw new Error('Formato no válido');
+      promociones = data;
+      currentId = promociones[0].id;
+      populateSelect();
+      saveLocal();
+      renderCurrentTab();
+      notify('Datos importados: ' + promociones.length + ' promociones');
+    } catch(err) { notify('Error al importar: ' + err.message); }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// ==================== IMPORTAR EXCEL ====================
+// ==================== EXPORTAR EXCEL ====================
+function exportarExcel() {
+  const p = currentPromo();
+  const c = calcCostes(p);
+  const wb = XLSX.utils.book_new();
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const AZUL   = { font: { color: { rgb: '1E5FA5' }, bold: false } };
+  const CABEC  = { font: { color: { rgb: 'FFFFFF' }, bold: true, name: 'Arial', sz: 10 },
+                   fill: { fgColor: { rgb: '2E5FA5' }, patternType: 'solid' },
+                   alignment: { horizontal: 'center', vertical: 'center' } };
+  const GRUPO  = { font: { color: { rgb: '1E3F6B' }, bold: true, name: 'Arial', sz: 10 },
+                   fill: { fgColor: { rgb: 'D9E8F5' }, patternType: 'solid' } };
+  const TOTAL  = { font: { color: { rgb: '000000' }, bold: true, name: 'Arial', sz: 10 },
+                   fill: { fgColor: { rgb: 'D0E8C8' }, patternType: 'solid' } };
+  const AMBAR  = { fill: { fgColor: { rgb: 'FFFFF0C0' }, patternType: 'solid' } };
+  const NUM    = { numFmt: '#,##0' };
+  const PCT    = { numFmt: '0.000%' };
+  const NUM2   = { numFmt: '#,##0.00' };
+
+  function makeCell(v, style={}) {
+    const t = typeof v === 'number' ? 'n' : 's';
+    return { v, t: v == null ? 'z' : t, s: style };
+  }
+  function setColWidths(ws, widths) {
+    ws['!cols'] = widths.map(w => ({ wch: w }));
+  }
+  function setMerge(ws, r1, c1, r2, c2) {
+    if (!ws['!merges']) ws['!merges'] = [];
+    ws['!merges'].push({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } });
+  }
+  function writeRow(ws, row, cells, r) {
+    cells.forEach((cell, c) => {
+      if (cell == null) return;
+      const addr = XLSX.utils.encode_cell({ r, c });
+      ws[addr] = cell;
+    });
+    if (!ws['!ref']) ws['!ref'] = `A1:A1`;
+    const [minC, maxC] = ws['!ref'].match(/[A-Z]+/g).map(l => XLSX.utils.decode_col(l));
+    const [minR, maxR] = ws['!ref'].match(/\d+/g).map(n => +n - 1);
+    const newMaxC = Math.max(maxC, cells.length - 1);
+    const newMaxR = Math.max(maxR, r);
+    ws['!ref'] = `A1:${XLSX.utils.encode_cell({ r: newMaxR, c: newMaxC })}`;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // HOJA SUPERFICIES
+  // ════════════════════════════════════════════════════════════════════════════
+  const wsSup = {};
+  const cabSup = ['Planta','Tipo','m² Garaje','m² Jardín','m² Local','m² Vivienda','TOTAL'];
+  // Fila 1: título
+  wsSup['A1'] = { v: `SUPERFICIES — ${p.nombre}`, t:'s', s:{ font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'2E5FA5'},patternType:'solid'} } };
+  setMerge(wsSup, 0, 0, 0, 6);
+  // Fila 2: instrucción
+  wsSup['A2'] = { v:'Planta  /  Tipo: Cerrada | Abierta | Abierta cubierta', t:'s', s:{font:{italic:true,sz:9,color:{rgb:'888888'}}} };
+  setMerge(wsSup, 1, 0, 1, 6);
+  // Fila 3: cabeceras
+  cabSup.forEach((h, c) => { wsSup[XLSX.utils.encode_cell({r:2,c})] = { v:h, t:'s', s:CABEC }; });
+  // Filas de datos (desde fila 4 = índice 3)
+  p.plantas.forEach((pl, i) => {
+    const r = 3 + i;
+    const tot = (pl.gar||0)+(pl.jar||0)+(pl.local||0)+(pl.viv||0);
+    const cells = [pl.planta, pl.tipo, pl.gar||null, pl.jar||null, pl.local||null, pl.viv||null, tot||null];
+    cells.forEach((v, c) => {
+      if (v == null || v === 0) return;
+      wsSup[XLSX.utils.encode_cell({r,c})] = { v, t: typeof v==='number'?'n':'s', s: c>=2?{...AZUL,...NUM2}:AZUL };
+    });
+  });
+  // Fila TOTALES (fila 41 = índice 40)
+  const totRow = 40;
+  const s = calcSuperficies(p);
+  [null,'TOTALES',s.gar,s.jar,s.local,s.viv,s.tot].forEach((v,c) => {
+    if (v == null) return;
+    wsSup[XLSX.utils.encode_cell({r:totRow,c})] = { v, t:typeof v==='number'?'n':'s', s:{...TOTAL,...(typeof v==='number'?NUM2:{})} };
+  });
+  // Nº plazas y viviendas (filas 42-43 = índices 41-42)
+  wsSup[XLSX.utils.encode_cell({r:41,c:0})] = { v:'Nº plazas garaje', t:'s' };
+  wsSup[XLSX.utils.encode_cell({r:41,c:2})] = { v:p.nplazas||0, t:'n', s:{...AZUL,...NUM} };
+  wsSup[XLSX.utils.encode_cell({r:42,c:0})] = { v:'Nº viviendas total', t:'s' };
+  wsSup[XLSX.utils.encode_cell({r:42,c:2})] = { v:p.nviv_input||0, t:'n', s:{...AZUL,...NUM} };
+  wsSup['!ref'] = `A1:G${totRow+3}`;
+  setColWidths(wsSup, [18,18,12,12,12,14,12]);
+  wsSup['!rows'] = [{hpt:20},{hpt:14},{hpt:18}];
+  XLSX.utils.book_append_sheet(wb, wsSup, 'SUPERFICIES');
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // HOJA VIVIENDAS
+  // ════════════════════════════════════════════════════════════════════════════
+  const wsViv = {};
+  wsViv['A1'] = { v:`VIVIENDAS — ${p.nombre}`, t:'s', s:{ font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'2E5FA5'},patternType:'solid'} } };
+  setMerge(wsViv, 0, 0, 0, 7);
+  wsViv['A2'] = { v:'Dorm=0 → tipología sin dormitorios (trasteros, garajes): no computa en suma de unidades', t:'s', s:{font:{italic:true,sz:9,color:{rgb:'888888'}}} };
+  setMerge(wsViv, 1, 0, 1, 7);
+  const cabViv = ['Tipología','Uds','Dorm','m²Cons/ud','m²Útil/ud','Precio Lista (€)','Precio Venta (€)','Notas'];
+  cabViv.forEach((h,c) => { wsViv[XLSX.utils.encode_cell({r:2,c})] = { v:h, t:'s', s:CABEC }; });
+
+  const v = calcViviendas(p);
+  p.tipologias.forEach((t, i) => {
+    const r = 3 + i;
+    [t.tip, t.uds, t.dorm, t.m2c, t.m2u, t.precio_lista, t.precio_venta||t.precio_lista, t.notas||''].forEach((val,c) => {
+      wsViv[XLSX.utils.encode_cell({r,c})] = {
+        v: val, t: typeof val==='number'?'n':'s',
+        s: c===0||c===7 ? AZUL : {...AZUL,...(c>=5?NUM:c>=3?NUM2:{})}
+      };
+    });
+  });
+  // Fila totales (fila 59 = índice 58, referenciada en COSTES)
+  const rVivTot = 58;
+  const totUdsViv = p.tipologias.filter(t=>t.dorm>0).reduce((a,t)=>a+(t.uds||0),0);
+  [null, totUdsViv, null, v.tot_m2c, v.tot_m2u, v.ingresos].forEach((val,c) => {
+    if (val == null) return;
+    wsViv[XLSX.utils.encode_cell({r:rVivTot,c})] = { v:val, t:'n', s:{...TOTAL,...NUM} };
+  });
+  wsViv[XLSX.utils.encode_cell({r:rVivTot,c:0})] = { v:'TOTALES', t:'s', s:TOTAL };
+  wsViv['!ref'] = `A1:H${rVivTot+2}`;
+  setColWidths(wsViv, [28,8,8,12,12,18,18,30]);
+  XLSX.utils.book_append_sheet(wb, wsViv, 'VIVIENDAS');
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // HOJA COSTES
+  // ════════════════════════════════════════════════════════════════════════════
+  const wsCos = {};
+  wsCos['A1'] = { v:`COSTES — ${p.nombre}`, t:'s', s:{ font:{bold:true,color:{rgb:'FFFFFF'},sz:12}, fill:{fgColor:{rgb:'2E5FA5'},patternType:'solid'} } };
+  setMerge(wsCos, 0, 0, 0, 10);
+  wsCos['A2'] = { v:`🔵 Azul = input manual  ·  🟡 Amarillo = fórmula editable  ·  PEM Licencia: ${Math.round(p.pem_licencia||0).toLocaleString('es-ES')} €  ·  Préstamo: ${Math.round(p.prestamo||0).toLocaleString('es-ES')} €`, t:'s', s:{font:{italic:true,sz:9,color:{rgb:'666666'}}} };
+  setMerge(wsCos, 1, 0, 1, 10);
+
+  // Inputs globales
+  const hip_max = (p.prestamo||0) * 1.3;
+  const resp_hip = hip_max;
+  const inputsGlob = [
+    ['Ingresos totales viviendas (€)', v.ingresos, 'Base para % comerciales y técnicos'],
+    ['Hipoteca máxima (€)', hip_max, '= Préstamo × 1,3'],
+    ['Responsabilidad hipotecaria (€)', resp_hip, '= Préstamo × 1,3'],
+    ['Importe préstamo promotor (€)', p.prestamo||0, 'Capital — base apertura e intereses'],
+    ['Plazo de construcción (meses)', p.cf_plazo||24, 'Meses obra'],
+    ['PEM Licencia', p.pem_licencia||0, 'Base Tasa Urb., ICIO, técnicos, seguros'],
+    ['Importe línea de avales (€)', (v.ingresos*0.2)+(0.1*v.ingresos*0.2+3*0.03*v.ingresos*0.2), '20% ingresos'],
+  ];
+  wsCos['A3'] = { v:'INPUTS GLOBALES', t:'s', s:{font:{bold:true,color:{rgb:'FFFFFF'}},fill:{fgColor:{rgb:'4A7AB5'},patternType:'solid'}} };
+  setMerge(wsCos, 2, 0, 2, 10);
+  inputsGlob.forEach(([label, val, nota], i) => {
+    const r = 3 + i;
+    wsCos[XLSX.utils.encode_cell({r,c:0})] = { v:label, t:'s', s:{font:{name:'Arial',sz:10}} };
+    wsCos[XLSX.utils.encode_cell({r,c:5})] = { v:Math.round(val), t:'n', s:{...AZUL,...NUM} };
+    wsCos[XLSX.utils.encode_cell({r,c:10})] = { v:nota, t:'s', s:{font:{italic:true,sz:9,color:{rgb:'888888'}}} };
+  });
+
+  // Cabeceras columnas costes
+  const cabCos = ['Grupo','Concepto','Notas / Fórmula','Base / Uds','% / Ratio','Coste Unit.','Presupuesto (€)','Ejecutado (€)','Pendiente (€)','% Ejec.','ID clave'];
+  const rCabCos = 10;
+  cabCos.forEach((h,c) => { wsCos[XLSX.utils.encode_cell({r:rCabCos,c})] = { v:h, t:'s', s:CABEC }; });
+
+  // Filas de costes
+  let rCos = rCabCos + 1;
+  const pres_list = [];
+  p.costes.forEach(g => {
+    // Cabecera grupo
+    wsCos[XLSX.utils.encode_cell({r:rCos,c:0})] = { v:g.grupo, t:'s', s:GRUPO };
+    for (let c=1;c<11;c++) wsCos[XLSX.utils.encode_cell({r:rCos,c})] = { v:'', t:'s', s:GRUPO };
+    setMerge(wsCos, rCos, 0, rCos, 10);
+    rCos++;
+
+    g.items.forEach(it => {
+      const pres = it.pres||0;
+      const ejec = it.ejec||0;
+      const pend = pres - ejec;
+      const pejec = pres > 0 ? ejec/pres : 0;
+      pres_list.push({ r:rCos, pres });
+
+      wsCos[XLSX.utils.encode_cell({r:rCos,c:0})] = { v:'', t:'s' };
+      wsCos[XLSX.utils.encode_cell({r:rCos,c:1})] = { v:it.concepto, t:'s', s:{font:{name:'Arial',sz:10}} };
+      wsCos[XLSX.utils.encode_cell({r:rCos,c:2})] = { v:it.notas||'', t:'s', s:{font:{italic:true,sz:9,color:{rgb:'888888'}}} };
+      // Base
+      if (it.formula !== 'directo') {
+        let baseVal = null;
+        if (it.formula === 'solar×%' || it.formula === 'pemlic_solar×%') baseVal = p.pem_licencia||0;
+        else if (it.formula === 'pemlic×%' || it.formula?.startsWith('pemlic×')) baseVal = p.pem_licencia||0;
+        else if (it.formula === 'hipmax×%') baseVal = Math.round(hip_max);
+        else if (it.formula === 'resp_hip×%') baseVal = Math.round(resp_hip);
+        else if (it.formula === 'cap×tipo×meses' || it.formula === 'prestamo×%') baseVal = p.prestamo||0;
+        else if (it.formula === 'ingresos×%') baseVal = Math.round(v.ingresos);
+        if (baseVal) wsCos[XLSX.utils.encode_cell({r:rCos,c:3})] = { v:baseVal, t:'n', s:{...NUM, font:{color:{rgb:'1D7A4E'},sz:10}} };
+      }
+      if (it.pct_val != null) wsCos[XLSX.utils.encode_cell({r:rCos,c:4})] = { v:it.pct_val, t:'n', s:{...AZUL,...PCT} };
+      if (it.coste_unit != null) wsCos[XLSX.utils.encode_cell({r:rCos,c:5})] = { v:it.coste_unit, t:'n', s:{...AZUL,...NUM} };
+      // Presupuesto
+      const presStyle = it.formula==='directo' ? {...AZUL,...NUM} : {...AMBAR,...NUM};
+      wsCos[XLSX.utils.encode_cell({r:rCos,c:6})] = { v:Math.round(pres), t:'n', s:presStyle };
+      wsCos[XLSX.utils.encode_cell({r:rCos,c:7})] = { v:Math.round(ejec), t:'n', s:{...AZUL,...NUM} };
+      wsCos[XLSX.utils.encode_cell({r:rCos,c:8})] = { v:Math.round(pend), t:'n', s:NUM };
+      wsCos[XLSX.utils.encode_cell({r:rCos,c:9})] = { v:pejec, t:'n', s:{numFmt:'0.0%'} };
+      wsCos[XLSX.utils.encode_cell({r:rCos,c:10})] = { v:it.id||'', t:'s', s:{font:{sz:9,color:{rgb:'999999'}}} };
+      rCos++;
+    });
+  });
+
+  // Fila TOTALES
+  wsCos[XLSX.utils.encode_cell({r:rCos,c:0})] = { v:'GASTOS TOTALES', t:'s', s:TOTAL };
+  wsCos[XLSX.utils.encode_cell({r:rCos,c:6})] = { v:Math.round(c.tot_pres), t:'n', s:{...TOTAL,...NUM} };
+  wsCos[XLSX.utils.encode_cell({r:rCos,c:7})] = { v:Math.round(c.tot_ejec), t:'n', s:{...TOTAL,...NUM} };
+  wsCos[XLSX.utils.encode_cell({r:rCos,c:8})] = { v:Math.round(c.pend), t:'n', s:{...TOTAL,...NUM} };
+  wsCos[XLSX.utils.encode_cell({r:rCos,c:9})] = { v:c.pct_ejec, t:'n', s:{...TOTAL,numFmt:'0.0%'} };
+  wsCos['!ref'] = `A1:K${rCos+1}`;
+  setColWidths(wsCos, [20,30,35,16,10,12,16,16,16,10,18]);
+  XLSX.utils.book_append_sheet(wb, wsCos, 'COSTES');
+
+  // ── Descargar ──────────────────────────────────────────────────────────────
+  const nombre = p.nombre.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
+  XLSX.writeFile(wb, `${nombre}_PromoManager.xlsx`);
+  notify(`Excel exportado: ${nombre}_PromoManager.xlsx`);
+}
+
+// ==================== IMPORTAR EXCEL ====================
+function importarExcel(event) {
+const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array', cellFormula: false, cellNF: false });
+      const nombre = file.name.replace(/\.(xlsx|xls)$/i, '');
+      const p = mkPromocion(nombre);
+
+      // ---- HOJA SUPERFICIES ----
+      const wsSup = wb.Sheets['SUPERFICIES'];
+      if (wsSup) {
+        const rows = XLSX.utils.sheet_to_json(wsSup, { header: 1, defval: '' });
+        const plantas = [];
+        // Lee desde fila índice 4 hasta fila vacía o hasta la fila TOTALES, sin límite
+        const tiposValidos = ['Cerrada', 'Abierta', 'Abierta cubierta'];
+        for (let i = 4; i < rows.length; i++) {
+          const r = rows[i];
+          const planta = String(r[0] || '').trim();
+          const tipo = String(r[1] || '').trim();
+          // Parar en fila de TOTALES o en bloque de ratios/métricas
+          if (planta.toUpperCase() === 'TOTALES') break;
+          if (!planta && !tipo) continue;
+          if (!tiposValidos.includes(tipo)) continue;
+          plantas.push({
+            planta: planta || '—',
+            tipo,
+            gar:   parseFloat(r[2]) || 0,
+            jar:   parseFloat(r[3]) || 0,
+            local: parseFloat(r[4]) || 0,
+            viv:   parseFloat(r[5]) || 0,
+          });
+        }
+        if (plantas.length > 0) p.plantas = plantas;
+
+        // Buscar fila de nº plazas y nº viviendas dinámicamente (tras la fila TOTALES)
+        let foundTotales = false;
+        for (let i = 4; i < rows.length; i++) {
+          const r = rows[i];
+          if (String(r[0]||'').trim().toUpperCase() === 'TOTALES') { foundTotales = true; continue; }
+          if (foundTotales) {
+            const label = String(r[0]||'').toLowerCase();
+            if (label.includes('plaza') || label.includes('garaje')) { const v = parseInt(r[2]); if (v>0) p.nplazas = v; }
+            if (label.includes('vivienda') && label.includes('total')) { const v = parseInt(r[2]); if (v>0) p.nviv_input = v; }
+            // Salir tras leer suficientes filas de ratios
+            if (i > rows.length - 3) break;
+          }
+        }
+      }
+
+      // ---- HOJA VIVIENDAS ----
+      const wsViv = wb.Sheets['VIVIENDAS'];
+      if (wsViv) {
+        const rows = XLSX.utils.sheet_to_json(wsViv, { header: 1, defval: '' });
+        const tips = [];
+        // Lee desde fila índice 4 hasta la primera fila completamente vacía, sin límite
+        for (let i = 4; i < rows.length; i++) {
+          const r = rows[i];
+          const tip = String(r[0] || '').trim();
+          // Detener en fila completamente vacía (las filas de totales/ratios están debajo)
+          if (!tip && !r[1] && !r[2] && !r[3] && !r[4] && !r[5]) break;
+          if (!tip) continue;
+          const uds  = parseFloat(r[1]) || 0;
+          const dorm = parseFloat(r[2]) || 0;
+          const m2c  = parseFloat(r[3]) || 0;
+          const m2u  = parseFloat(r[4]) || 0;
+          const pl   = parseFloat(r[5]) || 0;
+          if (uds === 0 && pl === 0) continue;
+          tips.push({ tip, uds, dorm, m2c, m2u,
+            precio_lista: pl, precio_venta: parseFloat(r[6]) || pl, notas: String(r[7]||'') });
+        }
+        if (tips.length > 0) p.tipologias = tips;
+      }
+
+      // ---- HOJA COSTES ----
+      const wsCos = wb.Sheets['COSTES'];
+      if (wsCos) {
+        const rows = XLSX.utils.sheet_to_json(wsCos, { header: 1, defval: '' });
+        // Inputs globales
+        // F5 = ingresos (fila 4, col 5), F6=resp_hip, F7=préstamo, F8=meses
+        const getF = (ri, ci) => { const r = rows[ri]; return r ? (parseFloat(r[ci]) || 0) : 0; };
+        const prestamo_xls = getF(7, 5);   // F8 = préstamo
+        const pem_lic_xls  = getF(9, 5);   // F10 = PEM Licencia
+        const meses_xls    = getF(8, 5);   // F9 = plazo
+        if (meses_xls > 0)    p.cf_plazo      = meses_xls;
+        if (pem_lic_xls > 0)  p.pem_licencia  = pem_lic_xls;
+        if (prestamo_xls > 0) p.prestamo       = prestamo_xls;
+
+        // Precio solar (F15 = fila índice 14, col 5)
+        const solar_xls = getF(14, 5);
+        if (solar_xls > 0) {
+          p.costes[0].items[0].pres     = solar_xls;
+          p.costes[0].items[0].base_val = solar_xls;
+        }
+
+        // ITP solar ratio (col D fila índice 16)
+        const itp_d = getF(16, 3);
+        if (itp_d > 0) p.costes[0].items[2].pct_val = itp_d;
+
+        // Mapa de ID -> grupo/item en p.costes para actualizar ejecutados (col G)
+        const idMap = {};
+        p.costes.forEach((g, gi) => g.items.forEach((it, ii) => { idMap[it.id] = [gi, ii]; }));
+
+        // Recorrer todas las filas buscando col J (ID clave = col 9)
+        for (let i = 11; i < rows.length; i++) {
+          const r = rows[i];
+          const id  = String(r[9] || '').trim();
+          const pres = parseFloat(r[5]) || 0;
+          const ejec = parseFloat(r[6]) || 0;
+          if (!id || !idMap[id]) continue;
+          const [gi, ii] = idMap[id];
+          if (pres > 0) {
+            p.costes[gi].items[ii].pres = pres;
+            // Si es input directo, actualizar base_val también
+            if (p.costes[gi].items[ii].formula === 'directo') {
+              p.costes[gi].items[ii].base_val = pres;
+            }
+          }
+          if (ejec > 0) p.costes[gi].items[ii].ejec = ejec;
+          // Ratios personalizados (col D)
+          const ratio = parseFloat(r[3]);
+          if (!isNaN(ratio) && ratio > 0 && p.costes[gi].items[ii].pct_val !== null) {
+            p.costes[gi].items[ii].pct_val = ratio;
+          }
+          // Coste unitario (col E)
+          const cu = parseFloat(r[4]);
+          if (!isNaN(cu) && cu > 0 && p.costes[gi].items[ii].coste_unit !== null) {
+            p.costes[gi].items[ii].coste_unit = cu;
+          }
+        }
+
+        // Actualizar préstamo en apertura
+        if (prestamo_xls > 0) {
+          const ap = p.costes[3].items.find(i => i.id === 'fin_apertura');
+          if (ap) ap.base_val = prestamo_xls;
+          const io = p.costes[3].items.find(i => i.id === 'fin_int_obra');
+          if (io) io.base_val = prestamo_xls;
+        }
+      }
+
+      promociones.push(p);
+      currentId = p.id;
+      populateSelect();
+      saveLocal();
+      notify('Excel importado: "' + nombre + '"');
+      showTab('costes');
+    } catch(err) {
+      console.error(err);
+      notify('Error al leer el Excel: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+
+function autoSaveAndRender(tab) {
+  saveLocal();
+  if (tab === 'superficies') renderSuperficies();
+  else if (tab === 'viviendas') renderViviendas();
+}
+
+// ==================== CLOUD MODAL ====================
+function showCloudModal() {
+  const isConfigured = !!(cloudBinId && cloudApiKey);
+  E('cloud-modal-body').innerHTML = isConfigured ? renderCloudConfigured() : renderCloudSetup();
+  E('cloud-modal-buttons').innerHTML = isConfigured
+    ? `<button onclick="closeCloudModal()">Cerrar</button>
+       <button onclick="syncNow()" class="primary">Sincronizar ahora</button>
+       <button onclick="desconectarNube()" class="danger">Desconectar nube</button>`
+    : `<button onclick="closeCloudModal()">Cancelar</button>`;
+  E('cloud-modal').style.display = 'flex';
+}
+
+function renderCloudSetup() {
+  return `
+  <div style="background:var(--blue-l);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--blue)">
+    <strong>JSONBin.io</strong> actúa como base de datos gratuita en la nube. Todos los dispositivos
+    comparten el mismo <em>Bin</em>. Elige qué quieres hacer:
+  </div>
+
+  <div style="display:flex;gap:8px;margin-bottom:16px">
+    <button id="btn-modo-nuevo" onclick="setModoNube('nuevo')"
+      style="flex:1;padding:10px;border-radius:var(--radius);border:2px solid var(--blue);background:var(--blue-l);color:var(--blue);font-weight:600;cursor:pointer">
+      Crear bin nuevo<br><span style="font-size:11px;font-weight:400">Primera vez</span>
+    </button>
+    <button id="btn-modo-existente" onclick="setModoNube('existente')"
+      style="flex:1;padding:10px;border-radius:var(--radius);border:1px solid var(--border2);background:var(--bg0);color:var(--text1);cursor:pointer">
+      Conectar bin existente<br><span style="font-size:11px;color:var(--text3)">Ya tengo un Bin ID</span>
+    </button>
+  </div>
+
+  <div class="form-row">
+    <label>Master Key de JSONBin.io <a href="https://jsonbin.io" target="_blank" style="color:var(--blue);font-size:11px;margin-left:6px">Obtener en jsonbin.io →</a></label>
+    <input type="password" id="cloud-apikey" placeholder="$2b$10$..." autocomplete="off">
+    <div class="hint">La encuentras en tu perfil de JSONBin → API Keys</div>
+  </div>
+
+  <div id="cloud-modo-nuevo">
+    <div class="form-row">
+      <label>Nombre del bin (opcional)</label>
+      <input type="text" id="cloud-nombre" placeholder="Mi empresa" value="PromoManager">
+    </div>
+  </div>
+
+  <div id="cloud-modo-existente" style="display:none">
+    <div class="form-row">
+      <label>Bin ID existente</label>
+      <input type="text" id="cloud-binid-input" placeholder="ej: 6650abc123def..." autocomplete="off" style="font-family:monospace">
+      <div class="hint">Cópialo desde el dispositivo donde ya está configurado (botón ☁ → Bin ID)</div>
+    </div>
+  </div>
+
+  <div id="cloud-setup-error" style="color:var(--red);font-size:12px;margin-top:4px;display:none"></div>
+  <div class="btn-row" style="margin-top:8px">
+    <button onclick="closeCloudModal()">Cancelar</button>
+    <button class="primary" id="cloud-connect-btn" onclick="conectarNube()">Crear bin y conectar</button>
+  </div>`;
+}
+
+function setModoNube(modo) {
+  const esNuevo = modo === 'nuevo';
+  E('cloud-modo-nuevo').style.display     = esNuevo ? '' : 'none';
+  E('cloud-modo-existente').style.display = esNuevo ? 'none' : '';
+  E('cloud-connect-btn').textContent      = esNuevo ? 'Crear bin y conectar' : 'Conectar a bin existente';
+  E('btn-modo-nuevo').style.border        = esNuevo ? '2px solid var(--blue)' : '1px solid var(--border2)';
+  E('btn-modo-nuevo').style.background    = esNuevo ? 'var(--blue-l)' : 'var(--bg0)';
+  E('btn-modo-nuevo').style.color         = esNuevo ? 'var(--blue)' : 'var(--text1)';
+  E('btn-modo-nuevo').style.fontWeight    = esNuevo ? '600' : '400';
+  E('btn-modo-existente').style.border    = !esNuevo ? '2px solid var(--blue)' : '1px solid var(--border2)';
+  E('btn-modo-existente').style.background= !esNuevo ? 'var(--blue-l)' : 'var(--bg0)';
+  E('btn-modo-existente').style.color     = !esNuevo ? 'var(--blue)' : 'var(--text1)';
+  E('btn-modo-existente').style.fontWeight= !esNuevo ? '600' : '400';
+}
+
+function renderCloudConfigured() {
+  return `
+  <div style="background:var(--green-l);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;font-size:13px;color:var(--green)">
+    <strong>Conectado y sincronizado.</strong> Tus datos se guardan automáticamente en la nube.
+  </div>
+
+  <div style="background:var(--amber-l);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--amber)">
+    <strong>Para conectar otro dispositivo</strong> necesitas estos dos datos:
+  </div>
+
+  <div class="form-row" style="margin-bottom:10px">
+    <label>Bin ID <span style="font-size:11px;color:var(--text3)">(cópialo al conectar otro dispositivo)</span></label>
+    <div style="display:flex;gap:6px">
+      <input type="text" id="binid-display" value="${cloudBinId}" readonly
+        style="flex:1;background:var(--bg1);font-family:monospace;font-size:12px">
+      <button onclick="copiarAlPortapapeles('binid-display','Bin ID copiado')" style="padding:6px 12px;white-space:nowrap">Copiar</button>
+    </div>
+  </div>
+  <div class="form-row" style="margin-bottom:0">
+    <label>Master Key <span style="font-size:11px;color:var(--text3)">(la misma de jsonbin.io)</span></label>
+    <div style="display:flex;gap:6px">
+      <input type="password" id="apikey-display" value="${cloudApiKey}" readonly style="flex:1;background:var(--bg1)">
+      <button onclick="toggleVerApiKey()" style="padding:6px 12px">Mostrar</button>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;padding:10px 14px;background:var(--bg1);border-radius:var(--radius);font-size:12px;color:var(--text2);line-height:1.7">
+    <strong>Pasos para otro dispositivo:</strong><br>
+    1. Abre la app → pulsa ☁<br>
+    2. Elige <em>"Conectar bin existente"</em><br>
+    3. Introduce la Master Key y el Bin ID de arriba<br>
+    4. Pulsa <em>"Conectar a bin existente"</em>
+  </div>`;
+}
+
+function copiarAlPortapapeles(inputId, msg) {
+  const el = E(inputId);
+  const prev = el.type; el.type = 'text';
+  el.select(); document.execCommand('copy');
+  el.type = prev;
+  notify(msg || 'Copiado');
+}
+function toggleVerApiKey() {
+  const el = E('apikey-display');
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+function closeCloudModal() { E('cloud-modal').style.display = 'none'; }
+
+async function conectarNube() {
+  const apiKey = E('cloud-apikey').value.trim();
+  const errEl  = E('cloud-setup-error');
+  const btn    = E('cloud-connect-btn');
+  const modoExistente = E('cloud-modo-existente').style.display !== 'none';
+
+  if (!apiKey) { errEl.textContent = 'Introduce tu Master Key de JSONBin'; errEl.style.display='block'; return; }
+  errEl.style.display = 'none';
+
+  if (modoExistente) {
+    // ---- Conectar a bin existente ----
+    const binId = (E('cloud-binid-input')?.value || '').trim();
+    if (!binId) { errEl.textContent = 'Introduce el Bin ID'; errEl.style.display='block'; return; }
+    btn.textContent = 'Conectando…'; btn.disabled = true;
+    try {
+      // Test read
+      const r = await fetch(`${JSONBIN_BASE}/b/${binId}/latest`, {
+        headers: { 'X-Master-Key': apiKey }
+      });
+      if (!r.ok) throw new Error('No se puede leer el bin. Revisa el Bin ID y la Master Key.');
+      const d = await r.json();
+      cloudApiKey = apiKey;
+      cloudBinId  = binId;
+      // Load remote data
+      if (d.record?.promociones?.length) {
+        promociones   = d.record.promociones.map(migratePromo);
+        lastRemoteAt  = d.record.updatedAt || 0;
+        lastWrittenAt = lastRemoteAt;
+        currentId     = promociones[0].id;
+      } else {
+        // Remote bin is empty → push local data
+        const ts = Date.now();
+        await cloudWrite({ promociones, updatedAt: ts, version: 2 });
+        lastWrittenAt = ts; lastRemoteAt = ts;
+      }
+      persistLocal();
+      populateSelect();
+      renderCurrentTab();
+      setSyncStatus('ok');
+      closeCloudModal();
+      notify('Conectado al bin existente — ' + promociones.length + ' promociones cargadas');
+    } catch(e) {
+      errEl.textContent = 'Error: ' + e.message;
+      errEl.style.display = 'block';
+      btn.textContent = 'Conectar a bin existente'; btn.disabled = false;
+    }
+  } else {
+    // ---- Crear bin nuevo ----
+    const nombre = E('cloud-nombre').value.trim() || 'PromoManager';
+    btn.textContent = 'Creando bin…'; btn.disabled = true;
+    try {
+      const binId = await cloudCreateBin(apiKey, nombre);
+      cloudApiKey = apiKey;
+      cloudBinId  = binId;
+      const ts = Date.now();
+      lastWrittenAt = ts; lastRemoteAt = ts;
+      await cloudWrite({ promociones, updatedAt: ts, version: 2 });
+      persistLocal();
+      setSyncStatus('ok');
+      closeCloudModal();
+      notify('Nube conectada — Bin ID: ' + binId);
+      setTimeout(() => showCloudModal(), 400);
+    } catch(e) {
+      errEl.textContent = 'Error: ' + e.message;
+      errEl.style.display = 'block';
+      btn.textContent = 'Crear bin y conectar'; btn.disabled = false;
+    }
+  }
+}
+
+async function syncNow() {
+  setSyncStatus('pulling');
+  closeCloudModal();
+  // Pull remote first (force), then push local state
+  await pullFromCloud(true);
+  await pushToCloud();
+  notify('Sincronización completada');
+}
+
+function desconectarNube() {
+  if (!confirm('¿Desconectar la nube? Los datos quedarán guardados solo en este dispositivo.')) return;
+  cloudBinId = null; cloudApiKey = null; lastWrittenAt = 0; lastRemoteAt = 0;
+  persistLocal();
+  setSyncStatus('nocloud');
+  closeCloudModal();
+  notify('Nube desconectada');
+}
+
+// ==================== INIT ====================
+E('modal').addEventListener('click', e => { if (e.target === E('modal')) closeModal(); });
+E('cloud-modal').addEventListener('click', e => { if (e.target === E('cloud-modal')) closeCloudModal(); });
+populateSelect();
+renderDashboard();
+</script>
+</body>
+</html>
