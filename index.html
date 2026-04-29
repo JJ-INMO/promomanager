@@ -866,8 +866,8 @@ function mkPromocion(nombre, opts = {}) {
 let promociones = [mkPromocion('Paseo de las Damas 12')];
 let currentId = promociones[0].id;
 let charts = {};
-let cloudBinId  = null;
-let cloudApiKey = null;
+let gistId    = null;
+let gistToken = null;
 let syncTimer   = null;
 let lastWrittenAt = 0;   // timestamp of our last cloud write
 let lastRemoteAt  = 0;   // timestamp of last remote data we saw
@@ -875,28 +875,31 @@ let isSyncing = false;
 
 function currentPromo() { return promociones.find(p => p.id === currentId) || promociones[0]; }
 
-// ==================== CLOUD (JSONBin.io) ====================
-const JSONBIN_BASE = 'https://api.jsonbin.io/v3';
+// ==================== CLOUD (GitHub Gist) ====================
+const GIST_API = 'https://api.github.com/gists';
+const GIST_FILE = 'promomanager_data.json';
 
 async function cloudRead() {
-  if (!cloudBinId || !cloudApiKey) return null;
+  if (!gistId || !gistToken) return null;
   try {
-    const r = await fetch(`${JSONBIN_BASE}/b/${cloudBinId}/latest`, {
-      headers: { 'X-Master-Key': cloudApiKey }
+    const r = await fetch(`${GIST_API}/${gistId}`, {
+      headers: { 'Authorization': `token ${gistToken}`, 'Accept': 'application/vnd.github+json' }
     });
     if (!r.ok) return null;
     const d = await r.json();
-    return d.record || null;
+    const content = d.files?.[GIST_FILE]?.content;
+    if (!content) return null;
+    return JSON.parse(content);
   } catch(e) { return null; }
 }
 
 async function cloudWrite(payload) {
-  if (!cloudBinId || !cloudApiKey) return { ok: false, err: 'Sin credenciales' };
+  if (!gistId || !gistToken) return { ok: false, err: 'Sin credenciales' };
   try {
-    const r = await fetch(`${JSONBIN_BASE}/b/${cloudBinId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-Master-Key': cloudApiKey },
-      body: JSON.stringify(payload)
+    const r = await fetch(`${GIST_API}/${gistId}`, {
+      method: 'PATCH',
+      headers: { 'Authorization': `token ${gistToken}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(payload) } } })
     });
     if (!r.ok) {
       let msg = `HTTP ${r.status}`;
@@ -907,20 +910,23 @@ async function cloudWrite(payload) {
   } catch(e) { return { ok: false, err: e.message }; }
 }
 
-async function cloudCreateBin(apiKey, nombre) {
-  const r = await fetch(`${JSONBIN_BASE}/b`, {
+async function cloudCreateGist(token) {
+  const r = await fetch(GIST_API, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Master-Key': apiKey,
-      'X-Bin-Name': 'PromoManager-' + nombre,
-      'X-Bin-Private': 'true'
-    },
-    body: JSON.stringify({ promociones: [], updatedAt: 0, version: 2 })
+    headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      description: 'PromoManager — datos promociones',
+      public: false,
+      files: { [GIST_FILE]: { content: JSON.stringify({ promociones: [], updatedAt: 0, version: 2 }) } }
+    })
   });
-  if (!r.ok) throw new Error('API Key incorrecta o sin permisos.');
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try { const d = await r.json(); msg = d.message || msg; } catch(e) {}
+    throw new Error(msg);
+  }
   const d = await r.json();
-  return d.metadata.id;
+  return d.id;
 }
 
 // ---- Status indicator ----
@@ -945,7 +951,7 @@ function setSyncStatus(status) {
 function persistLocal() {
   try {
     localStorage.setItem('pm_data', JSON.stringify({
-      promociones, cloudBinId, cloudApiKey, lastWrittenAt, lastRemoteAt, version: 2
+      promociones, gistId, gistToken, lastWrittenAt, lastRemoteAt, version: 2
     }));
   } catch(e) {}
 }
@@ -954,7 +960,7 @@ function persistLocal() {
 function saveLocal() {
   persistLocal();
   showSaved();
-  if (!cloudBinId || !cloudApiKey) { setSyncStatus('nocloud'); return; }
+  if (!gistId || !gistToken) { setSyncStatus('nocloud'); return; }
   setSyncStatus('syncing');
   clearTimeout(syncTimer);
   syncTimer = setTimeout(pushToCloud, 1200);
@@ -980,7 +986,7 @@ async function pushToCloud() {
 
 // ---- Pull from cloud: apply remote changes ----
 async function pullFromCloud(force = false) {
-  if (!cloudBinId || !cloudApiKey) return;
+  if (!gistId || !gistToken) return;
   if (isSyncing && !force) return;
   const remote = await cloudRead();
   if (!remote || !remote.promociones || !Array.isArray(remote.promociones)) return;
@@ -1044,8 +1050,8 @@ try {
       promociones = parsed.map(migratePromo);
     } else {
       if (parsed.promociones?.length) promociones = parsed.promociones.map(migratePromo);
-      cloudBinId     = parsed.cloudBinId     || null;
-      cloudApiKey    = parsed.cloudApiKey    || null;
+      gistId         = parsed.gistId         || null;
+      gistToken      = parsed.gistToken      || null;
       lastWrittenAt  = parsed.lastWrittenAt  || 0;
       lastRemoteAt   = parsed.lastRemoteAt   || 0;
     }
@@ -1055,7 +1061,7 @@ try {
 
 // On startup: if cloud configured, pull latest immediately
 setTimeout(async () => {
-  if (cloudBinId && cloudApiKey) {
+  if (gistId && gistToken) {
     setSyncStatus('pulling');
     await pullFromCloud(true);
     setSyncStatus('ok');
@@ -2380,9 +2386,9 @@ function eliminarPromo(id) {
 function exportarJSON() {
   const payload = {
     promociones,
-    cloudBinId:  cloudBinId  || null,
-    cloudApiKey: cloudApiKey || null,
-    exportedAt:  new Date().toISOString()
+    gistId:    gistId    || null,
+    gistToken: gistToken || null,
+    exportedAt: new Date().toISOString()
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
@@ -2404,8 +2410,9 @@ async function importarJSON(event) {
         promociones = data;
       } else if (data.promociones && Array.isArray(data.promociones)) {
         promociones = data.promociones;
-        if (data.cloudBinId)  cloudBinId  = data.cloudBinId;
-        if (data.cloudApiKey) cloudApiKey = data.cloudApiKey;
+        if (data.gistId)    gistId    = data.gistId;
+        if (data.gistToken) gistToken = data.gistToken;
+        // compatibilidad con JSONBin antiguo (ignorar cloudBinId/cloudApiKey)
       } else {
         throw new Error('Formato no válido');
       }
@@ -2413,7 +2420,7 @@ async function importarJSON(event) {
       populateSelect();
       persistLocal();
       renderCurrentTab();
-      if (cloudBinId && cloudApiKey) {
+      if (gistId && gistToken) {
         setSyncStatus('syncing');
         const ts = Date.now();
         const result = await cloudWrite({ promociones, updatedAt: ts, version: 2 });
@@ -2816,7 +2823,7 @@ function autoSaveAndRender(tab) {
 
 // ==================== CLOUD MODAL ====================
 function showCloudModal() {
-  const isConfigured = !!(cloudBinId && cloudApiKey);
+  const isConfigured = !!(gistId && gistToken);
   E('cloud-modal-body').innerHTML = isConfigured ? renderCloudConfigured() : renderCloudSetup();
   E('cloud-modal-buttons').innerHTML = isConfigured
     ? `<button onclick="closeCloudModal()">Cerrar</button>
@@ -2829,46 +2836,41 @@ function showCloudModal() {
 function renderCloudSetup() {
   return `
   <div style="background:var(--blue-l);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--blue)">
-    <strong>JSONBin.io</strong> actúa como base de datos gratuita en la nube. Todos los dispositivos
-    comparten el mismo <em>Bin</em>. Elige qué quieres hacer:
+    <strong>GitHub Gist</strong> actúa como base de datos gratuita en la nube. Todos los dispositivos
+    comparten el mismo Gist privado. Elige qué quieres hacer:
   </div>
 
   <div style="display:flex;gap:8px;margin-bottom:16px">
     <button id="btn-modo-nuevo" onclick="setModoNube('nuevo')"
       style="flex:1;padding:10px;border-radius:var(--radius);border:2px solid var(--blue);background:var(--blue-l);color:var(--blue);font-weight:600;cursor:pointer">
-      Crear bin nuevo<br><span style="font-size:11px;font-weight:400">Primera vez</span>
+      Crear Gist nuevo<br><span style="font-size:11px;font-weight:400">Primera vez</span>
     </button>
     <button id="btn-modo-existente" onclick="setModoNube('existente')"
       style="flex:1;padding:10px;border-radius:var(--radius);border:1px solid var(--border2);background:var(--bg0);color:var(--text1);cursor:pointer">
-      Conectar bin existente<br><span style="font-size:11px;color:var(--text3)">Ya tengo un Bin ID</span>
+      Conectar Gist existente<br><span style="font-size:11px;color:var(--text3)">Ya tengo un Gist ID</span>
     </button>
   </div>
 
   <div class="form-row">
-    <label>Master Key de JSONBin.io <a href="https://jsonbin.io" target="_blank" style="color:var(--blue);font-size:11px;margin-left:6px">Obtener en jsonbin.io →</a></label>
-    <input type="password" id="cloud-apikey" placeholder="$2b$10$..." autocomplete="off">
-    <div class="hint">La encuentras en tu perfil de JSONBin → API Keys</div>
+    <label>Personal Access Token de GitHub <a href="https://github.com/settings/tokens" target="_blank" style="color:var(--blue);font-size:11px;margin-left:6px">Obtener en GitHub →</a></label>
+    <input type="password" id="cloud-apikey" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+    <div class="hint">GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → permiso <strong>gist</strong></div>
   </div>
 
-  <div id="cloud-modo-nuevo">
-    <div class="form-row">
-      <label>Nombre del bin (opcional)</label>
-      <input type="text" id="cloud-nombre" placeholder="Mi empresa" value="PromoManager">
-    </div>
-  </div>
+  <div id="cloud-modo-nuevo"></div>
 
   <div id="cloud-modo-existente" style="display:none">
     <div class="form-row">
-      <label>Bin ID existente</label>
-      <input type="text" id="cloud-binid-input" placeholder="ej: 6650abc123def..." autocomplete="off" style="font-family:monospace">
-      <div class="hint">Cópialo desde el dispositivo donde ya está configurado (botón ☁ → Bin ID)</div>
+      <label>Gist ID existente</label>
+      <input type="text" id="cloud-binid-input" placeholder="ej: a1b2c3d4e5f6..." autocomplete="off" style="font-family:monospace">
+      <div class="hint">Cópialo desde el dispositivo donde ya está configurado (botón ☁ → Gist ID)</div>
     </div>
   </div>
 
   <div id="cloud-setup-error" style="color:var(--red);font-size:12px;margin-top:4px;display:none"></div>
   <div class="btn-row" style="margin-top:8px">
     <button onclick="closeCloudModal()">Cancelar</button>
-    <button class="primary" id="cloud-connect-btn" onclick="conectarNube()">Crear bin y conectar</button>
+    <button class="primary" id="cloud-connect-btn" onclick="conectarNube()">Crear Gist y conectar</button>
   </div>`;
 }
 
@@ -2876,7 +2878,7 @@ function setModoNube(modo) {
   const esNuevo = modo === 'nuevo';
   E('cloud-modo-nuevo').style.display     = esNuevo ? '' : 'none';
   E('cloud-modo-existente').style.display = esNuevo ? 'none' : '';
-  E('cloud-connect-btn').textContent      = esNuevo ? 'Crear bin y conectar' : 'Conectar a bin existente';
+  E('cloud-connect-btn').textContent      = esNuevo ? 'Crear Gist y conectar' : 'Conectar a Gist existente';
   E('btn-modo-nuevo').style.border        = esNuevo ? '2px solid var(--blue)' : '1px solid var(--border2)';
   E('btn-modo-nuevo').style.background    = esNuevo ? 'var(--blue-l)' : 'var(--bg0)';
   E('btn-modo-nuevo').style.color         = esNuevo ? 'var(--blue)' : 'var(--text1)';
@@ -2890,7 +2892,7 @@ function setModoNube(modo) {
 function renderCloudConfigured() {
   return `
   <div style="background:var(--green-l);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;font-size:13px;color:var(--green)">
-    <strong>Conectado y sincronizado.</strong> Tus datos se guardan automáticamente en la nube.
+    <strong>Conectado y sincronizado.</strong> Tus datos se guardan automáticamente en la nube (GitHub Gist).
   </div>
 
   <div style="background:var(--amber-l);border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--amber)">
@@ -2898,17 +2900,17 @@ function renderCloudConfigured() {
   </div>
 
   <div class="form-row" style="margin-bottom:10px">
-    <label>Bin ID <span style="font-size:11px;color:var(--text3)">(cópialo al conectar otro dispositivo)</span></label>
+    <label>Gist ID <span style="font-size:11px;color:var(--text3)">(cópialo al conectar otro dispositivo)</span></label>
     <div style="display:flex;gap:6px">
-      <input type="text" id="binid-display" value="${cloudBinId}" readonly
+      <input type="text" id="binid-display" value="${gistId}" readonly
         style="flex:1;background:var(--bg1);font-family:monospace;font-size:12px">
-      <button onclick="copiarAlPortapapeles('binid-display','Bin ID copiado')" style="padding:6px 12px;white-space:nowrap">Copiar</button>
+      <button onclick="copiarAlPortapapeles('binid-display','Gist ID copiado')" style="padding:6px 12px;white-space:nowrap">Copiar</button>
     </div>
   </div>
   <div class="form-row" style="margin-bottom:0">
-    <label>Master Key <span style="font-size:11px;color:var(--text3)">(la misma de jsonbin.io)</span></label>
+    <label>Personal Access Token <span style="font-size:11px;color:var(--text3)">(el mismo de GitHub)</span></label>
     <div style="display:flex;gap:6px">
-      <input type="password" id="apikey-display" value="${cloudApiKey}" readonly style="flex:1;background:var(--bg1)">
+      <input type="password" id="apikey-display" value="${gistToken}" readonly style="flex:1;background:var(--bg1)">
       <button onclick="toggleVerApiKey()" style="padding:6px 12px">Mostrar</button>
     </div>
   </div>
@@ -2916,9 +2918,9 @@ function renderCloudConfigured() {
   <div style="margin-top:14px;padding:10px 14px;background:var(--bg1);border-radius:var(--radius);font-size:12px;color:var(--text2);line-height:1.7">
     <strong>Pasos para otro dispositivo:</strong><br>
     1. Abre la app → pulsa ☁<br>
-    2. Elige <em>"Conectar bin existente"</em><br>
-    3. Introduce la Master Key y el Bin ID de arriba<br>
-    4. Pulsa <em>"Conectar a bin existente"</em>
+    2. Elige <em>"Conectar Gist existente"</em><br>
+    3. Introduce el Token y el Gist ID de arriba<br>
+    4. Pulsa <em>"Conectar a Gist existente"</em>
   </div>`;
 }
 
@@ -2937,36 +2939,37 @@ function toggleVerApiKey() {
 function closeCloudModal() { E('cloud-modal').style.display = 'none'; }
 
 async function conectarNube() {
-  const apiKey = E('cloud-apikey').value.trim();
+  const token  = E('cloud-apikey').value.trim();
   const errEl  = E('cloud-setup-error');
   const btn    = E('cloud-connect-btn');
   const modoExistente = E('cloud-modo-existente').style.display !== 'none';
 
-  if (!apiKey) { errEl.textContent = 'Introduce tu Master Key de JSONBin'; errEl.style.display='block'; return; }
+  if (!token) { errEl.textContent = 'Introduce tu Personal Access Token de GitHub'; errEl.style.display='block'; return; }
   errEl.style.display = 'none';
 
   if (modoExistente) {
-    // ---- Conectar a bin existente ----
-    const binId = (E('cloud-binid-input')?.value || '').trim();
-    if (!binId) { errEl.textContent = 'Introduce el Bin ID'; errEl.style.display='block'; return; }
+    // ---- Conectar a Gist existente ----
+    const id = (E('cloud-binid-input')?.value || '').trim();
+    if (!id) { errEl.textContent = 'Introduce el Gist ID'; errEl.style.display='block'; return; }
     btn.textContent = 'Conectando…'; btn.disabled = true;
     try {
-      // Test read
-      const r = await fetch(`${JSONBIN_BASE}/b/${binId}/latest`, {
-        headers: { 'X-Master-Key': apiKey }
+      const r = await fetch(`${GIST_API}/${id}`, {
+        headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github+json' }
       });
-      if (!r.ok) throw new Error('No se puede leer el bin. Revisa el Bin ID y la Master Key.');
+      if (!r.ok) throw new Error('No se puede leer el Gist. Revisa el Gist ID y el Token.');
       const d = await r.json();
-      cloudApiKey = apiKey;
-      cloudBinId  = binId;
-      // Load remote data
-      if (d.record?.promociones?.length) {
-        promociones   = d.record.promociones.map(migratePromo);
-        lastRemoteAt  = d.record.updatedAt || 0;
-        lastWrittenAt = lastRemoteAt;
-        currentId     = promociones[0].id;
+      gistToken = token;
+      gistId    = id;
+      const content = d.files?.[GIST_FILE]?.content;
+      if (content) {
+        const remote = JSON.parse(content);
+        if (remote?.promociones?.length) {
+          promociones   = remote.promociones.map(migratePromo);
+          lastRemoteAt  = remote.updatedAt || 0;
+          lastWrittenAt = lastRemoteAt;
+          currentId     = promociones[0].id;
+        }
       } else {
-        // Remote bin is empty → push local data
         const ts = Date.now();
         await cloudWrite({ promociones, updatedAt: ts, version: 2 });
         lastWrittenAt = ts; lastRemoteAt = ts;
@@ -2976,32 +2979,31 @@ async function conectarNube() {
       renderCurrentTab();
       setSyncStatus('ok');
       closeCloudModal();
-      notify('Conectado al bin existente — ' + promociones.length + ' promociones cargadas');
+      notify('Conectado al Gist — ' + promociones.length + ' promociones cargadas');
     } catch(e) {
       errEl.textContent = 'Error: ' + e.message;
       errEl.style.display = 'block';
-      btn.textContent = 'Conectar a bin existente'; btn.disabled = false;
+      btn.textContent = 'Conectar a Gist existente'; btn.disabled = false;
     }
   } else {
-    // ---- Crear bin nuevo ----
-    const nombre = E('cloud-nombre').value.trim() || 'PromoManager';
-    btn.textContent = 'Creando bin…'; btn.disabled = true;
+    // ---- Crear Gist nuevo ----
+    btn.textContent = 'Creando Gist…'; btn.disabled = true;
     try {
-      const binId = await cloudCreateBin(apiKey, nombre);
-      cloudApiKey = apiKey;
-      cloudBinId  = binId;
+      const id = await cloudCreateGist(token);
+      gistToken = token;
+      gistId    = id;
       const ts = Date.now();
       lastWrittenAt = ts; lastRemoteAt = ts;
       await cloudWrite({ promociones, updatedAt: ts, version: 2 });
       persistLocal();
       setSyncStatus('ok');
       closeCloudModal();
-      notify('Nube conectada — Bin ID: ' + binId);
+      notify('Nube conectada — Gist ID: ' + id);
       setTimeout(() => showCloudModal(), 400);
     } catch(e) {
       errEl.textContent = 'Error: ' + e.message;
       errEl.style.display = 'block';
-      btn.textContent = 'Crear bin y conectar'; btn.disabled = false;
+      btn.textContent = 'Crear Gist y conectar'; btn.disabled = false;
     }
   }
 }
@@ -3009,7 +3011,6 @@ async function conectarNube() {
 async function syncNow() {
   setSyncStatus('pulling');
   closeCloudModal();
-  // Pull remote first (force), then push local state
   await pullFromCloud(true);
   await pushToCloud();
   notify('Sincronización completada');
@@ -3017,7 +3018,7 @@ async function syncNow() {
 
 function desconectarNube() {
   if (!confirm('¿Desconectar la nube? Los datos quedarán guardados solo en este dispositivo.')) return;
-  cloudBinId = null; cloudApiKey = null; lastWrittenAt = 0; lastRemoteAt = 0;
+  gistId = null; gistToken = null; lastWrittenAt = 0; lastRemoteAt = 0;
   persistLocal();
   setSyncStatus('nocloud');
   closeCloudModal();
