@@ -2372,7 +2372,13 @@ function eliminarPromo(id) {
 
 // ==================== IMPORT / EXPORT ====================
 function exportarJSON() {
-  const blob = new Blob([JSON.stringify(promociones, null, 2)], {type:'application/json'});
+  const payload = {
+    promociones,
+    cloudBinId:  cloudBinId  || null,
+    cloudApiKey: cloudApiKey || null,
+    exportedAt:  new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'promomanager_datos_' + new Date().toISOString().slice(0,10) + '.json';
@@ -2387,12 +2393,21 @@ function importarJSON(event) {
   reader.onload = e => {
     try {
       const data = JSON.parse(e.target.result);
-      if (!Array.isArray(data)) throw new Error('Formato no válido');
-      promociones = data;
+      // Soporte formato nuevo (objeto con promociones + credenciales) y formato antiguo (array)
+      if (Array.isArray(data)) {
+        promociones = data;
+      } else if (data.promociones && Array.isArray(data.promociones)) {
+        promociones = data.promociones;
+        if (data.cloudBinId)  cloudBinId  = data.cloudBinId;
+        if (data.cloudApiKey) cloudApiKey = data.cloudApiKey;
+      } else {
+        throw new Error('Formato no válido');
+      }
       currentId = promociones[0].id;
       populateSelect();
       saveLocal();
       renderCurrentTab();
+      setSyncStatus(cloudBinId && cloudApiKey ? 'ok' : 'nocloud');
       notify('Datos importados: ' + promociones.length + ' promociones');
     } catch(err) { notify('Error al importar: ' + err.message); }
   };
