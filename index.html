@@ -891,15 +891,20 @@ async function cloudRead() {
 }
 
 async function cloudWrite(payload) {
-  if (!cloudBinId || !cloudApiKey) return false;
+  if (!cloudBinId || !cloudApiKey) return { ok: false, err: 'Sin credenciales' };
   try {
     const r = await fetch(`${JSONBIN_BASE}/b/${cloudBinId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'X-Master-Key': cloudApiKey },
       body: JSON.stringify(payload)
     });
-    return r.ok;
-  } catch(e) { return false; }
+    if (!r.ok) {
+      let msg = `HTTP ${r.status}`;
+      try { const d = await r.json(); msg = d.message || msg; } catch(e) {}
+      return { ok: false, err: msg };
+    }
+    return { ok: true };
+  } catch(e) { return { ok: false, err: e.message }; }
 }
 
 async function cloudCreateBin(apiKey, nombre) {
@@ -960,14 +965,15 @@ async function pushToCloud() {
   isSyncing = true;
   const ts = Date.now();
   const payload = { promociones, updatedAt: ts, version: 2 };
-  const ok = await cloudWrite(payload);
-  if (ok) {
+  const result = await cloudWrite(payload);
+  if (result.ok) {
     lastWrittenAt = ts;
     lastRemoteAt  = ts;
     persistLocal();
     setSyncStatus('ok');
   } else {
     setSyncStatus('offline');
+    notify('Error sync: ' + result.err);
   }
   isSyncing = false;
 }
@@ -2405,10 +2411,25 @@ function importarJSON(event) {
       }
       currentId = promociones[0].id;
       populateSelect();
-      saveLocal();
+      persistLocal();
       renderCurrentTab();
-      setSyncStatus(cloudBinId && cloudApiKey ? 'ok' : 'nocloud');
-      notify('Datos importados: ' + promociones.length + ' promociones');
+      if (cloudBinId && cloudApiKey) {
+        setSyncStatus('syncing');
+        const ts = Date.now();
+        const result = await cloudWrite({ promociones, updatedAt: ts, version: 2 });
+        if (result.ok) {
+          lastWrittenAt = ts; lastRemoteAt = ts;
+          persistLocal();
+          setSyncStatus('ok');
+          notify('Datos importados y sincronizados: ' + promociones.length + ' promociones');
+        } else {
+          setSyncStatus('offline');
+          notify('Importados localmente pero error al sincronizar: ' + result.err);
+        }
+      } else {
+        setSyncStatus('nocloud');
+        notify('Datos importados: ' + promociones.length + ' promociones');
+      }
     } catch(err) { notify('Error al importar: ' + err.message); }
   };
   reader.readAsText(file);
